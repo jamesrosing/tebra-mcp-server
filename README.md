@@ -1,6 +1,15 @@
-# @allure-md/tebra-mcp-server
+# tebra-mcp-server
 
-MCP server for Tebra (Kareo) practice management. Exposes patient data, encounters, authorizations, appointments, charges, eligibility, and procedure codes to Claude and other MCP-compatible clients.
+[![npm version](https://img.shields.io/npm/v/tebra-mcp-server.svg)](https://www.npmjs.com/package/tebra-mcp-server)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
+MCP server for [Tebra](https://www.tebra.com/) (formerly Kareo) practice management. Exposes patient data, encounters, authorizations, appointments, charges, eligibility, and procedure codes to Claude and other MCP-compatible AI agents.
+
+## Quick Start
+
+```bash
+npx tebra-mcp-server
+```
 
 ## Prerequisites
 
@@ -16,35 +25,18 @@ MCP server for Tebra (Kareo) practice management. Exposes patient data, encounte
 | `TEBRA_CUSTOMER_KEY` | Yes | Customer key from Tebra PM admin |
 | `TEBRA_SOAP_ENDPOINT` | No | Override SOAP endpoint (for testing) |
 
-## Setup
+## Installation
 
-```bash
-cd tebra-mcp-server
-npm install
-npm run build
-```
+### Claude Code
 
-## Usage
-
-### Direct execution
-
-```bash
-TEBRA_SOAP_USER=user@practice.com \
-TEBRA_SOAP_PASSWORD=secret \
-TEBRA_CUSTOMER_KEY=abc123 \
-node dist/index.js
-```
-
-### Claude Desktop configuration
-
-Add to your Claude Desktop config (`claude_desktop_config.json`):
+Add to `.mcp.json` in your project root:
 
 ```json
 {
   "mcpServers": {
     "tebra": {
-      "command": "node",
-      "args": ["/path/to/tebra-mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "tebra-mcp-server"],
       "env": {
         "TEBRA_SOAP_USER": "user@practice.com",
         "TEBRA_SOAP_PASSWORD": "your-password",
@@ -55,16 +47,36 @@ Add to your Claude Desktop config (`claude_desktop_config.json`):
 }
 ```
 
-### Claude Code configuration
+### Claude Desktop
 
-Add to `.mcp.json` in your project root:
+Add to your `claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
     "tebra": {
-      "command": "node",
-      "args": ["./tebra-mcp-server/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "tebra-mcp-server"],
+      "env": {
+        "TEBRA_SOAP_USER": "user@practice.com",
+        "TEBRA_SOAP_PASSWORD": "your-password",
+        "TEBRA_CUSTOMER_KEY": "your-customer-key"
+      }
+    }
+  }
+}
+```
+
+### Cursor / VS Code
+
+Add to your MCP settings:
+
+```json
+{
+  "mcpServers": {
+    "tebra": {
+      "command": "npx",
+      "args": ["-y", "tebra-mcp-server"],
       "env": {
         "TEBRA_SOAP_USER": "user@practice.com",
         "TEBRA_SOAP_PASSWORD": "your-password",
@@ -99,5 +111,12 @@ The server wraps the Tebra/Kareo SOAP API v2.1:
 ## Development
 
 ```bash
+git clone https://github.com/jamesrosing/tebra-mcp-server.git
+cd tebra-mcp-server
+npm install
 npm run dev  # Uses tsx for direct TypeScript execution
 ```
+
+## License
+
+MIT
