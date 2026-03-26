@@ -1,5 +1,5 @@
 {
-  "name": "@allure-md/tebra-mcp-server",
+  "name": "tebra-mcp-server",
   "version": "0.1.0",
   "description": "MCP server for Tebra/Kareo practice management — exposes patient data, encounters, authorizations, and billing tools to AI agents via the Model Context Protocol",
   "main": "dist/index.js",
