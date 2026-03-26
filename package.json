@@ -1,0 +1,54 @@
+{
+  "name": "@allure-md/tebra-mcp-server",
+  "version": "0.1.0",
+  "description": "MCP server for Tebra/Kareo practice management — exposes patient data, encounters, authorizations, and billing tools to AI agents via the Model Context Protocol",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "tebra-mcp-server": "dist/index.js"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "tebra",
+    "kareo",
+    "practice-management",
+    "medical-billing",
+    "healthcare",
+    "ehr",
+    "soap-api",
+    "claude",
+    "model-context-protocol"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamesrosing/tebra-mcp-server.git"
+  },
+  "author": "James Rosing <james@allure-md.com>",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}
