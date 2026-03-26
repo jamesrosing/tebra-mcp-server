@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/tebra-mcp-server.svg)](https://www.npmjs.com/package/tebra-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-MCP server for [Tebra](https://www.tebra.com/) (formerly Kareo) practice management. Exposes patient data, encounters, authorizations, appointments, charges, eligibility, and procedure codes to Claude and other MCP-compatible AI agents.
+MCP server for [Tebra](https://www.tebra.com/) (formerly Kareo) practice management. Connects your existing Tebra account to Claude and other MCP-compatible AI agents, enabling access to patients, encounters, authorizations, appointments, charges, eligibility, and procedure codes through your practice's authenticated SOAP API credentials. No data is accessible without valid Tebra API credentials.
 
 ## Quick Start
 
