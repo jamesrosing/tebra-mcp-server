@@ -1,6 +1,18 @@
 /**
  * Configuration loader for the Tebra MCP server.
  * Validates required environment variables at startup.
+ *
+ * Required environment variables (SOAP API):
+ *   TEBRA_SOAP_USER      — SOAP API user (email)
+ *   TEBRA_SOAP_PASSWORD   — SOAP API password
+ *   TEBRA_CUSTOMER_KEY    — Customer key from Tebra PM admin
+ *   TEBRA_SOAP_ENDPOINT   — (optional) Override SOAP endpoint URL
+ *
+ * Optional environment variables (FHIR R4 API — enables clinical data tools):
+ *   TEBRA_FHIR_CLIENT_ID     — OAuth2 client ID from Tebra FHIR registration
+ *   TEBRA_FHIR_CLIENT_SECRET — OAuth2 client secret
+ *   TEBRA_FHIR_BASE_URL      — (optional) FHIR API base URL (default: Tebra production)
+ *   TEBRA_FHIR_TOKEN_URL     — (optional) OAuth2 token endpoint (default: Tebra production)
  */
 
 export interface TebraConfig {

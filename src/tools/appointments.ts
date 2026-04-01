@@ -11,7 +11,7 @@ export const appointmentTools = [
   {
     name: 'tebra_get_appointments',
     description:
-      'Get appointments from Tebra within a date range. Optionally filter by provider.',
+      'Get appointments from Tebra within a date range. Filter by provider, patient, confirmation status, service location, reason, type, and more.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -25,7 +25,53 @@ export const appointmentTools = [
         },
         providerId: {
           type: 'string',
-          description: 'Optional Tebra provider ID to filter by',
+          description: 'Tebra provider ID to filter by',
+        },
+        confirmationStatus: {
+          type: 'string',
+          enum: ['Confirmed', 'CheckedIn', 'NoShow', 'CheckedOut', 'Rescheduled', 'Scheduled', 'Cancelled'],
+          description: 'Filter by confirmation status',
+        },
+        patientFullName: {
+          type: 'string',
+          description: 'Filter by patient full name',
+        },
+        patientId: {
+          type: 'string',
+          description: 'Filter by Tebra patient ID',
+        },
+        serviceLocationName: {
+          type: 'string',
+          description: 'Filter by service location name',
+        },
+        appointmentReason: {
+          type: 'string',
+          description: 'Filter by appointment reason',
+        },
+        appointmentType: {
+          type: 'string',
+          enum: ['U', 'P', 'O'],
+          description: 'Filter by type: U=Unknown, P=Patient, O=Other',
+        },
+        fromCreatedDate: {
+          type: 'string',
+          description: 'Created date range start (YYYY-MM-DD)',
+        },
+        toCreatedDate: {
+          type: 'string',
+          description: 'Created date range end (YYYY-MM-DD)',
+        },
+        fromLastModifiedDate: {
+          type: 'string',
+          description: 'Modified date range start (YYYY-MM-DD)',
+        },
+        toLastModifiedDate: {
+          type: 'string',
+          description: 'Modified date range end (YYYY-MM-DD)',
+        },
+        casePayerScenario: {
+          type: 'string',
+          description: 'Patient case payer scenario filter',
         },
       },
       required: ['startDate', 'endDate'],
@@ -51,14 +97,36 @@ export async function handleAppointmentTool(
     return { content: [{ type: 'text', text: 'startDate and endDate are required.' }] };
   }
 
-  const providerId = args.providerId ? String(args.providerId) : undefined;
+  // Map of arg names to SOAP filter field names
+  const optionalFilterMap: Array<[string, string]> = [
+    ['providerId', 'ProviderID'],
+    ['confirmationStatus', 'ConfirmationStatus'],
+    ['patientFullName', 'PatientFullName'],
+    ['patientId', 'PatientID'],
+    ['serviceLocationName', 'ServiceLocationName'],
+    ['appointmentReason', 'AppointmentReason'],
+    ['appointmentType', 'Type'],
+    ['fromCreatedDate', 'FromCreatedDate'],
+    ['toCreatedDate', 'ToCreatedDate'],
+    ['fromLastModifiedDate', 'FromLastModifiedDate'],
+    ['toLastModifiedDate', 'ToLastModifiedDate'],
+    ['casePayerScenario', 'PatientCasePayerScenario'],
+  ];
+
+  const optionalFields: string[] = [];
+  for (const [argKey, soapField] of optionalFilterMap) {
+    const val = args[argKey];
+    if (val !== undefined && val !== null && val !== '') {
+      optionalFields.push(`<kar:${soapField}>${escapeXml(String(val))}</kar:${soapField}>`);
+    }
+  }
 
   const bodyXml = `
     <kar:request>
       <kar:Fields>
         <kar:StartDate>${escapeXml(startDate)}</kar:StartDate>
         <kar:EndDate>${escapeXml(endDate)}</kar:EndDate>
-        ${providerId ? `<kar:ProviderID>${escapeXml(providerId)}</kar:ProviderID>` : ''}
+        ${optionalFields.join('\n        ')}
       </kar:Fields>
     </kar:request>`;
 
