@@ -3,6 +3,7 @@
  *
  * Standalone version (no Next.js dependencies).
  * Builds SOAP XML envelopes, sends via fetch, parses responses.
+ * Per-endpoint rate limiting from Tebra API Technical Guide.
  * Retry with exponential backoff: 3 attempts at 1s, 2s, 4s.
  */
 
@@ -13,6 +14,38 @@ import type { TebraConfig } from './config.js';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const SOAP_NAMESPACE = 'http://www.kareo.com/api/schemas/';
+
+// ─── Per-Endpoint Rate Limits (ms) from Tebra API Technical Guide ──
+
+const ENDPOINT_RATE_LIMITS: Record<string, number> = {
+  GetAllPatients: 5000,
+  GetAppointment: 500,
+  GetAppointments: 1000,
+  GetAppointmentReasons: 1000,
+  GetCharges: 1000,
+  GetEncounterDetails: 500,
+  GetExternalVendors: 1000,
+  GetPatient: 250,
+  GetPatients: 1000,
+  GetPayments: 1000,
+  GetPractices: 500,
+  GetProcedureCodes: 500,
+  GetProviders: 500,
+  GetServiceLocations: 500,
+  GetThrottles: 5000,
+  GetTransactions: 1000,
+  CreateAppointment: 500,
+  CreateEncounter: 500,
+  CreatePatient: 500,
+  CreatePayments: 500,
+  UpdateAppointment: 500,
+  UpdateEncounterStatus: 500,
+  UpdatePatient: 1000,
+  DeleteAppointment: 500,
+};
+
+// Track last call time per endpoint
+const lastCallTimestamps: Record<string, number> = {};
 
 // ─── XML Helpers ────────────────────────────────────────────────
 
@@ -69,10 +102,52 @@ function buildEnvelope(config: TebraConfig, action: string, bodyXml: string): st
 </soap:Envelope>`;
 }
 
-// ─── SOAP Request with Retry ────────────────────────────────────
+// ─── SecurityResponse Check ─────────────────────────────────────
+
+function checkSecurityResponse(responseXml: string, action: string): void {
+  const securityBlock = extractTag(responseXml, 'SecurityResponse');
+  if (!securityBlock) return; // Some responses may not include it
+
+  const authenticated = extractTag(securityBlock, 'Authenticated');
+  if (authenticated && authenticated.toLowerCase() === 'false') {
+    throw new Error(
+      `Tebra authentication failed for ${action}. Check TEBRA_SOAP_USER and TEBRA_SOAP_PASSWORD.`
+    );
+  }
+
+  const authorized = extractTag(securityBlock, 'Authorized');
+  if (authorized && authorized.toLowerCase() === 'false') {
+    const missing = extractTag(securityBlock, 'PermissionsMissing');
+    throw new Error(
+      `Tebra authorization failed for ${action}. Missing permissions: ${missing || 'unknown'}. ` +
+      'Contact your Tebra administrator to grant API permissions.'
+    );
+  }
+}
+
+// ─── SOAP Request with Rate Limiting & Retry ────────────────────
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Enforce per-endpoint rate limiting before making a request.
+ * Waits if the minimum interval since the last call hasn't elapsed.
+ */
+async function enforceRateLimit(action: string): Promise<void> {
+  const minInterval = ENDPOINT_RATE_LIMITS[action];
+  if (!minInterval) return; // Unknown endpoint — no rate limit enforced
+
+  const lastCall = lastCallTimestamps[action];
+  if (lastCall) {
+    const elapsed = Date.now() - lastCall;
+    if (elapsed < minInterval) {
+      await sleep(minInterval - elapsed);
+    }
+  }
+
+  lastCallTimestamps[action] = Date.now();
 }
 
 export async function soapRequest(
@@ -86,6 +161,9 @@ export async function soapRequest(
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
+      // Pre-emptive rate limiting
+      await enforceRateLimit(action);
+
       const response = await fetch(config.endpoint, {
         method: 'POST',
         headers: {
@@ -117,6 +195,9 @@ export async function soapRequest(
           throw new Error(`Tebra ${action} error: ${errorMsg || 'Unknown error'}`);
         }
       }
+
+      // Check SecurityResponse for auth/permission failures
+      checkSecurityResponse(responseText, action);
 
       return responseText;
     } catch (error) {
