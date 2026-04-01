@@ -1,0 +1,8 @@
+{
+  "name": "tebra-mcp-server",
+  "description": "Tebra/Kareo practice management MCP server — 45 tools for patients, appointments, encounters, billing, payments, documents, providers, and FHIR clinical data. Use this plugin when working with Tebra PM, Kareo, medical billing, practice scheduling, insurance authorizations, or healthcare practice management.",
+  "author": {
+    "name": "James Rosing",
+    "email": "james@allure-md.com"
+  }
+}
