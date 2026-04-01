@@ -11,21 +11,82 @@ export const chargeTools = [
   {
     name: 'tebra_get_charges',
     description:
-      'Get charges from Tebra with optional date range and patient filters. Returns charge details with payment status, amounts, and balances.',
+      'Get charges from Tebra with flexible filters: date range, patient, provider, procedure/diagnosis codes, billing status, encounter status, and more. Returns charge details with payment status, amounts, and balances.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         fromDate: {
           type: 'string',
-          description: 'Start date filter (ISO 8601)',
+          description: 'Service start date filter (ISO 8601)',
         },
         toDate: {
           type: 'string',
-          description: 'End date filter (ISO 8601)',
+          description: 'Service end date filter (ISO 8601)',
         },
         patientId: {
           type: 'string',
-          description: 'Optional Tebra patient ID to filter by',
+          description: 'Tebra patient ID to filter by',
+        },
+        fromPostingDate: {
+          type: 'string',
+          description: 'Posting date range start (YYYY-MM-DD)',
+        },
+        toPostingDate: {
+          type: 'string',
+          description: 'Posting date range end (YYYY-MM-DD)',
+        },
+        batchNumber: {
+          type: 'string',
+          description: 'Filter by batch number',
+        },
+        renderingProviderName: {
+          type: 'string',
+          description: 'Rendering provider full name',
+        },
+        procedureCode: {
+          type: 'string',
+          description: 'Filter by CPT procedure code',
+        },
+        diagnosisCode: {
+          type: 'string',
+          description: 'Filter by ICD diagnosis code',
+        },
+        status: {
+          type: 'string',
+          description: 'Charge status filter',
+        },
+        billedTo: {
+          type: 'string',
+          description: 'Billed-to entity filter',
+        },
+        includeUnapprovedCharges: {
+          type: 'boolean',
+          description: 'Include unapproved charges (default false)',
+        },
+        encounterStatus: {
+          type: 'string',
+          enum: ['Draft', 'Review', 'Approved', 'Rejected'],
+          description: 'Encounter status filter',
+        },
+        casePayerScenario: {
+          type: 'string',
+          description: 'Case payer scenario filter',
+        },
+        fromLastModifiedDate: {
+          type: 'string',
+          description: 'Modified date range start (YYYY-MM-DD)',
+        },
+        toLastModifiedDate: {
+          type: 'string',
+          description: 'Modified date range end (YYYY-MM-DD)',
+        },
+        fromCreatedDate: {
+          type: 'string',
+          description: 'Created date range start (YYYY-MM-DD)',
+        },
+        toCreatedDate: {
+          type: 'string',
+          description: 'Created date range end (YYYY-MM-DD)',
         },
       },
       required: [],
@@ -44,17 +105,42 @@ export async function handleChargeTool(
     return { content: [{ type: 'text', text: `Unknown charge tool: ${name}` }] };
   }
 
-  const fromDate = args.fromDate ? String(args.fromDate) : undefined;
-  const toDate = args.toDate ? String(args.toDate) : undefined;
-  const patientId = args.patientId ? String(args.patientId) : undefined;
+  // Map of arg names to SOAP filter field names
+  const stringFilterMap: Array<[string, string]> = [
+    ['fromDate', 'FromServiceDate'],
+    ['toDate', 'ToServiceDate'],
+    ['patientId', 'PatientID'],
+    ['fromPostingDate', 'FromPostingDate'],
+    ['toPostingDate', 'ToPostingDate'],
+    ['batchNumber', 'BatchNumber'],
+    ['renderingProviderName', 'RenderingProviderFullName'],
+    ['procedureCode', 'ProcedureCode'],
+    ['diagnosisCode', 'DiagnosisCode'],
+    ['status', 'Status'],
+    ['billedTo', 'BilledTo'],
+    ['encounterStatus', 'EncounterStatus'],
+    ['casePayerScenario', 'CasePayerScenario'],
+    ['fromLastModifiedDate', 'FromLastModifiedDate'],
+    ['toLastModifiedDate', 'ToLastModifiedDate'],
+    ['fromCreatedDate', 'FromCreatedDate'],
+    ['toCreatedDate', 'ToCreatedDate'],
+  ];
 
-  const fieldsXml = [
-    fromDate ? `<kar:FromServiceDate>${escapeXml(fromDate)}</kar:FromServiceDate>` : '',
-    toDate ? `<kar:ToServiceDate>${escapeXml(toDate)}</kar:ToServiceDate>` : '',
-    patientId ? `<kar:PatientID>${escapeXml(patientId)}</kar:PatientID>` : '',
-  ]
-    .filter(Boolean)
-    .join('\n        ');
+  const filterFields: string[] = [];
+  for (const [argKey, soapField] of stringFilterMap) {
+    const val = args[argKey];
+    if (val !== undefined && val !== null && val !== '') {
+      filterFields.push(`<kar:${soapField}>${escapeXml(String(val))}</kar:${soapField}>`);
+    }
+  }
+
+  // Boolean: includeUnapprovedCharges -> "T" / "F"
+  if (args.includeUnapprovedCharges !== undefined && args.includeUnapprovedCharges !== null) {
+    const boolVal = args.includeUnapprovedCharges ? 'T' : 'F';
+    filterFields.push(`<kar:IncludeUnapprovedCharges>${boolVal}</kar:IncludeUnapprovedCharges>`);
+  }
+
+  const fieldsXml = filterFields.join('\n        ');
 
   const bodyXml = `
     <kar:request>

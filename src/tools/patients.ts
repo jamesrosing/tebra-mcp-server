@@ -17,16 +17,85 @@ export const patientTools = [
   {
     name: 'tebra_search_patients',
     description:
-      'Search for patients in Tebra by name, DOB, MRN, or external ID. Returns demographics and insurance policies.',
+      'Search for patients in Tebra with flexible filters. Use query/fullName for name search, or combine specific filters like firstName, lastName, DOB, MRN, insurance, etc. Returns demographics and insurance policies.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         query: {
           type: 'string',
-          description: 'Search query — patient name, date of birth, MRN, or external ID',
+          description: 'Search by full name (backward-compatible alias for fullName)',
+        },
+        firstName: {
+          type: 'string',
+          description: 'Filter by first name',
+        },
+        lastName: {
+          type: 'string',
+          description: 'Filter by last name',
+        },
+        fullName: {
+          type: 'string',
+          description: 'Search by full name',
+        },
+        dateOfBirth: {
+          type: 'string',
+          description: 'Exact date of birth (YYYY-MM-DD)',
+        },
+        fromDateOfBirth: {
+          type: 'string',
+          description: 'DOB range start (YYYY-MM-DD)',
+        },
+        toDateOfBirth: {
+          type: 'string',
+          description: 'DOB range end (YYYY-MM-DD)',
+        },
+        gender: {
+          type: 'string',
+          enum: ['Male', 'Female', 'Other', 'Unknown'],
+          description: 'Filter by gender',
+        },
+        mrn: {
+          type: 'string',
+          description: 'Medical Record Number',
+        },
+        externalId: {
+          type: 'string',
+          description: 'External system ID',
+        },
+        isActive: {
+          type: 'boolean',
+          description: 'Filter by active/inactive status',
+        },
+        practiceName: {
+          type: 'string',
+          description: 'Practice name filter',
+        },
+        insuranceCompanyName: {
+          type: 'string',
+          description: 'Insurance company name filter',
+        },
+        referringProviderName: {
+          type: 'string',
+          description: 'Referring provider name filter',
+        },
+        fromLastModifiedDate: {
+          type: 'string',
+          description: 'Modified date range start (YYYY-MM-DD)',
+        },
+        toLastModifiedDate: {
+          type: 'string',
+          description: 'Modified date range end (YYYY-MM-DD)',
+        },
+        fromCreatedDate: {
+          type: 'string',
+          description: 'Created date range start (YYYY-MM-DD)',
+        },
+        toCreatedDate: {
+          type: 'string',
+          description: 'Created date range end (YYYY-MM-DD)',
         },
       },
-      required: ['query'],
+      required: [],
     },
   },
   {
@@ -55,17 +124,51 @@ export async function handlePatientTool(
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   switch (name) {
     case 'tebra_search_patients': {
-      const query = String(args.query ?? '');
-      if (!query || query.length < 2) {
+      // Map of arg names to SOAP filter field names
+      const filterMap: Array<[string, string]> = [
+        ['firstName', 'FirstName'],
+        ['lastName', 'LastName'],
+        ['fullName', 'FullName'],
+        ['query', 'PatientFullName'],       // backward compat
+        ['dateOfBirth', 'DateofBirth'],
+        ['fromDateOfBirth', 'FromDateofBirth'],
+        ['toDateOfBirth', 'ToDateofBirth'],
+        ['gender', 'Gender'],
+        ['mrn', 'MRN'],
+        ['externalId', 'ExternalID'],
+        ['practiceName', 'PracticeName'],
+        ['insuranceCompanyName', 'InsuranceCompanyName'],
+        ['referringProviderName', 'ReferringProviderFullName'],
+        ['fromLastModifiedDate', 'FromLastModifiedDate'],
+        ['toLastModifiedDate', 'ToLastModifiedDate'],
+        ['fromCreatedDate', 'FromCreatedDate'],
+        ['toCreatedDate', 'ToCreatedDate'],
+      ];
+
+      const filterFields: string[] = [];
+      for (const [argKey, soapField] of filterMap) {
+        const val = args[argKey];
+        if (val !== undefined && val !== null && val !== '') {
+          filterFields.push(`<kar:${soapField}>${escapeXml(String(val))}</kar:${soapField}>`);
+        }
+      }
+
+      // Handle boolean isActive -> Active (true/false string)
+      if (args.isActive !== undefined && args.isActive !== null) {
+        const activeVal = args.isActive ? 'true' : 'false';
+        filterFields.push(`<kar:Active>${activeVal}</kar:Active>`);
+      }
+
+      if (filterFields.length === 0) {
         return {
-          content: [{ type: 'text', text: 'Search query must be at least 2 characters.' }],
+          content: [{ type: 'text', text: 'At least one search filter is required (e.g. query, firstName, lastName, mrn, dateOfBirth).' }],
         };
       }
 
       const bodyXml = `
         <kar:request>
           <kar:Fields>
-            <kar:PatientFullName>${escapeXml(query)}</kar:PatientFullName>
+            ${filterFields.join('\n            ')}
           </kar:Fields>
         </kar:request>`;
 
@@ -77,7 +180,7 @@ export async function handlePatientTool(
           {
             type: 'text',
             text: patients.length === 0
-              ? `No patients found for query: "${query}"`
+              ? 'No patients found matching the specified filters.'
               : JSON.stringify(patients, null, 2),
           },
         ],
