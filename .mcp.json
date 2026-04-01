@@ -1,0 +1,11 @@
+{
+  "tebra": {
+    "command": "npx",
+    "args": ["-y", "tebra-mcp-server"],
+    "env": {
+      "TEBRA_SOAP_USER": "",
+      "TEBRA_SOAP_PASSWORD": "",
+      "TEBRA_CUSTOMER_KEY": ""
+    }
+  }
+}
