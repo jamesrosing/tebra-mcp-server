@@ -333,3 +333,4 @@ npm run dev  # Uses tsx for direct TypeScript execution
 ## License
 
 MIT
+JAMES H. ROSING, MD, FACS
