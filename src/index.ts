@@ -76,7 +76,7 @@ const config = getConfig();
 const server = new Server(
   {
     name: '@allure-md/tebra-mcp-server',
-    version: '0.2.1',  // Keep in sync with package.json
+    version: '0.2.2',  // Keep in sync with package.json
   },
   {
     capabilities: {
