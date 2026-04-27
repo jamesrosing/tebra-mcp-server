@@ -53,8 +53,19 @@ import { bulkPatientTools, handleBulkPatientTool } from './tools/bulk-patients.j
 import { externalIdTools, handleExternalIdTool } from './tools/external-ids.js';
 import { systemTools, handleSystemTool } from './tools/system.js';
 
-// FHIR tool imports
-import { fhirClinicalTools, handleFhirClinicalTool } from './tools/fhir-clinical.js';
+// FHIR tool imports — one file per resource
+import { fhirAllergyTools, handleFhirAllergyTool } from './tools/fhir/allergies.js';
+import { fhirMedicationTools, handleFhirMedicationTool } from './tools/fhir/medications.js';
+import { fhirConditionTools, handleFhirConditionTool } from './tools/fhir/conditions.js';
+import { fhirVitalsTools, handleFhirVitalsTool } from './tools/fhir/vitals.js';
+import { fhirLabResultsTools, handleFhirLabResultsTool } from './tools/fhir/lab-results.js';
+import { fhirImmunizationTools, handleFhirImmunizationTool } from './tools/fhir/immunizations.js';
+import { fhirProcedureTools, handleFhirProcedureTool } from './tools/fhir/procedures.js';
+import { fhirCarePlanTools, handleFhirCarePlanTool } from './tools/fhir/care-plans.js';
+import { fhirCareTeamTools, handleFhirCareTeamTool } from './tools/fhir/care-team.js';
+import { fhirDiagnosticReportTools, handleFhirDiagnosticReportTool } from './tools/fhir/diagnostic-reports.js';
+import { fhirDocumentTools, handleFhirDocumentTool } from './tools/fhir/documents.js';
+import { fhirDeviceTools, handleFhirDeviceTool } from './tools/fhir/devices.js';
 
 // ─── Validate config on startup ─────────────────────────────────
 
@@ -102,7 +113,20 @@ const allTools = [
 
 // Conditionally register FHIR tools when credentials are available
 if (isFhirConfigured()) {
-  allTools.push(...fhirClinicalTools);
+  allTools.push(
+    ...fhirAllergyTools,
+    ...fhirMedicationTools,
+    ...fhirConditionTools,
+    ...fhirVitalsTools,
+    ...fhirLabResultsTools,
+    ...fhirImmunizationTools,
+    ...fhirProcedureTools,
+    ...fhirCarePlanTools,
+    ...fhirCareTeamTools,
+    ...fhirDiagnosticReportTools,
+    ...fhirDocumentTools,
+    ...fhirDeviceTools,
+  );
   console.error('FHIR tools enabled — 12 clinical data tools registered');
 } else {
   console.error('FHIR tools disabled — set TEBRA_FHIR_CLIENT_ID and TEBRA_FHIR_CLIENT_SECRET to enable clinical data tools');
@@ -208,11 +232,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'tebra_create_appointment_reason':
         return await handleSystemTool(name, safeArgs, config);
 
+      // ─── FHIR tools (one file per resource) ─────────
+      case 'tebra_fhir_get_allergies':
+        return await handleFhirAllergyTool(name, safeArgs);
+
+      case 'tebra_fhir_get_medications':
+        return await handleFhirMedicationTool(name, safeArgs);
+
+      case 'tebra_fhir_get_conditions':
+        return await handleFhirConditionTool(name, safeArgs);
+
+      case 'tebra_fhir_get_vitals':
+        return await handleFhirVitalsTool(name, safeArgs);
+
+      case 'tebra_fhir_get_lab_results':
+        return await handleFhirLabResultsTool(name, safeArgs);
+
+      case 'tebra_fhir_get_immunizations':
+        return await handleFhirImmunizationTool(name, safeArgs);
+
+      case 'tebra_fhir_get_procedures':
+        return await handleFhirProcedureTool(name, safeArgs);
+
+      case 'tebra_fhir_get_care_plans':
+        return await handleFhirCarePlanTool(name, safeArgs);
+
+      case 'tebra_fhir_get_care_team':
+        return await handleFhirCareTeamTool(name, safeArgs);
+
+      case 'tebra_fhir_get_diagnostic_reports':
+        return await handleFhirDiagnosticReportTool(name, safeArgs);
+
+      case 'tebra_fhir_get_documents':
+        return await handleFhirDocumentTool(name, safeArgs);
+
+      case 'tebra_fhir_get_devices':
+        return await handleFhirDeviceTool(name, safeArgs);
+
       default:
-        // Route FHIR tools by prefix
-        if (name.startsWith('tebra_fhir_')) {
-          return await handleFhirClinicalTool(name, safeArgs);
-        }
         return {
           content: [{ type: 'text', text: `Unknown tool: ${name}` }],
           isError: true,
