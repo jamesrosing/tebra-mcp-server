@@ -1,0 +1,43 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "com.jamesrosingmd/tebra",
+  "description": "MCP server for Tebra/Kareo practice management — patients, billing, scheduling, FHIR (45 tools)",
+  "repository": {
+    "url": "https://github.com/jamesrosing/tebra-mcp-server",
+    "source": "github"
+  },
+  "version": "0.2.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "tebra-mcp-server",
+      "version": "0.2.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "TEBRA_SOAP_USER",
+          "description": "Tebra SOAP API username",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "TEBRA_SOAP_PASSWORD",
+          "description": "Tebra SOAP API password",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true
+        },
+        {
+          "name": "TEBRA_CUSTOMER_KEY",
+          "description": "Tebra customer key (per-practice identifier)",
+          "isRequired": true,
+          "format": "string",
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
