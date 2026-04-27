@@ -32,41 +32,49 @@ No test framework is configured. No linter is configured.
 
 **FHIR client** (`src/fhir-client.ts`): OAuth2 client credentials flow with automatic token caching. Tokens are refreshed 60 seconds before expiry. FHIR tools are conditionally registered — they only appear in the tool list when FHIR credentials are configured. All FHIR responses are parsed from FHIR R4 Bundle JSON into simplified structures.
 
-**Tool modules** (`src/tools/*.ts`): Each exports a `*Tools` array (tool definitions with `inputSchema`) and a `handle*Tool` function. The handler receives `(name, args, config)` and returns `{ content: [{ type: 'text', text: string }] }`. All responses are parsed into JSON before returning to the MCP client.
+**Tool modules** (`src/tools/*.ts` for SOAP, `src/tools/fhir/*.ts` for FHIR): Each exports a `*Tools` array (tool definitions with `inputSchema`) and a `handle*Tool` function returning `{ content: [{ type: 'text', text: string }] }`. SOAP handlers take `(name, args, config: TebraConfig)` because `TebraConfig` is threaded through. FHIR handlers take `(name, args)` and resolve their config internally via `getFhirConfig()` from `src/fhir-client.ts`. All responses are parsed into JSON before returning to the MCP client.
 
 ### Tool File Locations
 
+Read-only "get" tools and CRUD/write tools are split into separate files for some resources (patients, appointments, encounters) so the read surface stays thin and write paths stay isolated. The `system.ts` module is a grab-bag for cross-cutting admin tools; new tools should generally land in a dedicated file rather than here.
+
 ```
 src/tools/
-  patients.ts           — search, get, create, update, get-all (5 tools)
-  appointments.ts       — get, get-detail, create, update, delete, reasons, create-reason (7 tools)
-  encounters.ts         — get, create, update-status (3 tools)
-  charges.ts            — get charges (1 tool)
-  payments.ts           — get, create payments (2 tools)
-  authorizations.ts     — get patient authorizations (1 tool)
-  eligibility.ts        — check insurance eligibility (1 tool)
-  procedure-codes.ts    — get procedure codes (1 tool)
-  providers.ts          — get providers (1 tool)
-  service-locations.ts  — get service locations (1 tool)
-  practices.ts          — get practices (1 tool)
-  documents.ts          — create, delete documents (2 tools)
-  transactions.ts       — get transactions (1 tool)
-  external-vendors.ts   — register, get vendors, update external ID (3 tools)
-  patient-cases.ts      — update patient case (1 tool)
-  system.ts             — validate connection, get throttles (2 tools)
+  patients.ts             — search, get (2 tools)
+  patient-crud.ts         — create, update (2 tools)
+  bulk-patients.ts        — get-all (1 tool)
+  authorizations.ts       — get patient authorizations (1 tool)
+  eligibility.ts          — check insurance eligibility (1 tool)
+  encounters.ts           — get, create (2 tools)
+  encounter-status.ts     — update status (1 tool)
+  appointments.ts         — get (list) (1 tool)
+  appointment-detail.ts   — get detail (1 tool)
+  appointment-crud.ts     — create, update, delete (3 tools)
+  appointment-reasons.ts  — get reasons (1 tool)
+  charges.ts              — get charges (1 tool)
+  payments.ts             — get, create (2 tools)
+  transactions.ts         — get transactions (1 tool)
+  providers.ts            — get providers (1 tool)
+  service-locations.ts    — get service locations (1 tool)
+  practices.ts            — get practices (1 tool)
+  procedure-codes.ts      — get procedure codes (1 tool)
+  documents.ts            — create, delete documents (2 tools)
+  external-ids.ts         — register vendor, get vendors, update external ID (3 tools)
+  system.ts               — validate connection, get throttles, update patient case, create appointment reason (4 tools)
   fhir/
-    allergies.ts        — FHIR allergy/intolerance (1 tool)
-    medications.ts      — FHIR medication list (1 tool)
-    conditions.ts       — FHIR conditions/problem list (1 tool)
-    vitals.ts           — FHIR vital signs (1 tool)
-    lab-results.ts      — FHIR lab observations (1 tool)
-    immunizations.ts    — FHIR immunizations (1 tool)
-    procedures.ts       — FHIR procedures (1 tool)
-    care-plans.ts       — FHIR care plans (1 tool)
-    care-team.ts        — FHIR care team (1 tool)
-    diagnostic-reports.ts — FHIR diagnostic reports (1 tool)
-    documents.ts        — FHIR clinical documents (1 tool)
-    devices.ts          — FHIR implantable devices (1 tool)
+    helpers.ts              — shared Bundle parsing, code/ref extractors, date-range builder, MCP result formatter, Observation summarizer (no tools — internal)
+    allergies.ts            — tebra_fhir_get_allergies (AllergyIntolerance)
+    medications.ts          — tebra_fhir_get_medications (MedicationRequest)
+    conditions.ts           — tebra_fhir_get_conditions (Condition)
+    vitals.ts               — tebra_fhir_get_vitals (Observation, vital-signs category)
+    lab-results.ts          — tebra_fhir_get_lab_results (Observation, laboratory category)
+    immunizations.ts        — tebra_fhir_get_immunizations (Immunization)
+    procedures.ts           — tebra_fhir_get_procedures (Procedure)
+    care-plans.ts           — tebra_fhir_get_care_plans (CarePlan)
+    care-team.ts            — tebra_fhir_get_care_team (CareTeam)
+    diagnostic-reports.ts   — tebra_fhir_get_diagnostic_reports (DiagnosticReport)
+    documents.ts            — tebra_fhir_get_documents (DocumentReference)
+    devices.ts              — tebra_fhir_get_devices (Device)
 ```
 
 ### Integration Modules
@@ -77,7 +85,9 @@ src/integrations/
   fal-integration.ts         — FAL patient sync + payment posting service
 ```
 
-**Adding a new tool**: Create a file in `src/tools/`, export the tools array and handler, import both in `src/index.ts`, spread into `allTools`, and add cases to the switch statement.
+**Adding a new SOAP tool**: Create a file in `src/tools/`, export `<name>Tools` and `handle<Name>Tool(name, args, config)`, then in `src/index.ts` add the import, spread `<name>Tools` into `allTools`, and add a case to the switch statement.
+
+**Adding a new FHIR tool**: Create a file in `src/tools/fhir/`, import shared helpers from `./helpers.js`, export `fhir<Resource>Tools` and `handleFhir<Resource>Tool(name, args)`, then in `src/index.ts` add the import, spread into the FHIR section of `allTools` (inside the `isFhirConfigured()` block), and add a case to the switch statement.
 
 ## Key Design Decisions
 
