@@ -83,23 +83,49 @@ export function extractNumber(xml: string, tagName: string): number {
 
 // ─── Envelope Builder ───────────────────────────────────────────
 
+/**
+ * Inject the RequestHeader (User/Password/CustomerKey) as the first child of
+ * the operation's <kar:request> element. Tebra's WSDL declares RequestHeader
+ * as a body parameter — placing it in <soap:Header> causes WCF to reject the
+ * request before authentication is even checked.
+ */
+function injectRequestHeader(config: TebraConfig, bodyXml: string): string {
+  const header =
+    `<kar:RequestHeader>` +
+      `<kar:CustomerKey>${escapeXml(config.customerKey)}</kar:CustomerKey>` +
+      `<kar:User>${escapeXml(config.user)}</kar:User>` +
+      `<kar:Password>${escapeXml(config.password)}</kar:Password>` +
+    `</kar:RequestHeader>`;
+
+  // Body is always wrapped in <kar:request>...</kar:request>. Insert the
+  // header immediately after the opening tag so it's the first child.
+  const openTagPattern = /<kar:request(\s[^>]*)?>/;
+  if (!openTagPattern.test(bodyXml)) {
+    throw new Error(
+      'soapRequest body must be wrapped in <kar:request>...</kar:request>'
+    );
+  }
+  return bodyXml.replace(openTagPattern, (match) => `${match}${header}`);
+}
+
 function buildEnvelope(config: TebraConfig, action: string, bodyXml: string): string {
+  const bodyWithHeader = injectRequestHeader(config, bodyXml);
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
                xmlns:kar="${SOAP_NAMESPACE}">
-  <soap:Header>
-    <kar:RequestHeader>
-      <kar:User>${escapeXml(config.user)}</kar:User>
-      <kar:Password>${escapeXml(config.password)}</kar:Password>
-      <kar:CustomerKey>${escapeXml(config.customerKey)}</kar:CustomerKey>
-    </kar:RequestHeader>
-  </soap:Header>
   <soap:Body>
     <kar:${action}>
-      ${bodyXml}
+      ${bodyWithHeader}
     </kar:${action}>
   </soap:Body>
 </soap:Envelope>`;
+}
+
+function redactSecrets(xml: string): string {
+  return xml
+    .replace(/<kar:User>[^<]*<\/kar:User>/g, '<kar:User>***</kar:User>')
+    .replace(/<kar:Password>[^<]*<\/kar:Password>/g, '<kar:Password>***</kar:Password>')
+    .replace(/<kar:CustomerKey>[^<]*<\/kar:CustomerKey>/g, '<kar:CustomerKey>***</kar:CustomerKey>');
 }
 
 // ─── SecurityResponse Check ─────────────────────────────────────
@@ -156,8 +182,18 @@ export async function soapRequest(
   bodyXml: string
 ): Promise<string> {
   const soapAction = `${SOAP_NAMESPACE}${action}`;
+  // SOAP 1.1 requires SOAPAction to be a quoted string. WCF dispatchers can
+  // reject unquoted values with a ContractFilter mismatch.
+  const soapActionHeader = `"${soapAction}"`;
   const envelope = buildEnvelope(config, action, bodyXml);
+  const debug = process.env.TEBRA_SOAP_DEBUG === '1' || process.env.TEBRA_SOAP_DEBUG === 'true';
   let lastError: Error | null = null;
+
+  if (debug) {
+    console.error(`[tebra-soap] POST ${config.endpoint}`);
+    console.error(`[tebra-soap] SOAPAction: ${soapActionHeader}`);
+    console.error(`[tebra-soap] Request body:\n${redactSecrets(envelope)}`);
+  }
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
@@ -168,12 +204,17 @@ export async function soapRequest(
         method: 'POST',
         headers: {
           'Content-Type': 'text/xml; charset=utf-8',
-          SOAPAction: soapAction,
+          SOAPAction: soapActionHeader,
         },
         body: envelope,
       });
 
       const responseText = await response.text();
+
+      if (debug) {
+        console.error(`[tebra-soap] HTTP ${response.status} for ${action}`);
+        console.error(`[tebra-soap] Response body:\n${responseText.slice(0, 2000)}`);
+      }
 
       if (!response.ok) {
         const faultString = extractTag(responseText, 'faultstring');
