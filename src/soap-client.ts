@@ -95,11 +95,15 @@ export function extractNumber(xml: string, tagName: string): number {
  * request before authentication is even checked.
  */
 function injectRequestHeader(config: TebraConfig, bodyXml: string): string {
+  // Element order matters. Tebra's WSDL declares the RequestHeader sequence as
+  // CustomerKey → Password → User. Sending User before Password causes
+  // authorization failures even with valid credentials — confirmed in writing
+  // by Tebra customer care.
   const header =
     `<kar:RequestHeader>` +
       `<kar:CustomerKey>${escapeXml(config.customerKey)}</kar:CustomerKey>` +
-      `<kar:User>${escapeXml(config.user)}</kar:User>` +
       `<kar:Password>${escapeXml(config.password)}</kar:Password>` +
+      `<kar:User>${escapeXml(config.user)}</kar:User>` +
     `</kar:RequestHeader>`;
 
   // Body is always wrapped in <kar:request>...</kar:request>. Insert the
