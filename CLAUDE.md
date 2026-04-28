@@ -85,9 +85,23 @@ src/integrations/
   fal-integration.ts         — FAL patient sync + payment posting service
 ```
 
-**Adding a new SOAP tool**: Create a file in `src/tools/`, export `<name>Tools` and `handle<Name>Tool(name, args, config)`, then in `src/index.ts` add the import, spread `<name>Tools` into `allTools`, and add a case to the switch statement.
+**Adding a new SOAP tool**: Create a file in `src/tools/`, export `<name>Tools` and `handle<Name>Tool(name, args, config)`, then in `src/index.ts` add the import, spread `<name>Tools` into `allTools`, and add a case to the switch statement. **Read the Tebra SOAP wire-format quirks below before constructing any new request body** — three non-obvious requirements must all be satisfied or the call fails server-side.
 
 **Adding a new FHIR tool**: Create a file in `src/tools/fhir/`, import shared helpers from `./helpers.js`, export `fhir<Resource>Tools` and `handleFhir<Resource>Tool(name, args)`, then in `src/index.ts` add the import, spread into the FHIR section of `allTools` (inside the `isFhirConfigured()` block), and add a case to the switch statement.
+
+### Tebra SOAP Wire-Format Quirks
+
+Tebra's WCF service rejects calls in three subtle ways that compound — each was fixed in a separate release because the previous bug masked the next. All of these are now centralized in `src/soap-client.ts` (for #1 and #2) and required of every GET tool's request body (for #3).
+
+1. **`SOAPAction` header must include the `KareoServices/` contract segment** — `"http://www.kareo.com/api/schemas/KareoServices/<Operation>"`, double-quoted per RFC 3902 §3.2. Without `KareoServices/`: HTTP 500 `ContractFilter mismatch at the EndpointDispatcher`. Handled in `soapRequest()` automatically.
+
+2. **`<RequestHeader>` children must appear in WSDL order**: `CustomerKey → Password → User` (not alphabetical). Wrong order silently fails authorization. Handled in `injectRequestHeader()` automatically.
+
+3. **`<Filter />` must appear in every GET request body**, even when the WSDL marks it `minOccurs="0"`. Tebra's server-side `GetFilteredX(...)` methods dereference the filter parameter without null-checking and `NullReferenceException` if it's absent. Each GET tool is responsible for emitting `<kar:Filter />` (or a populated `<kar:Filter>...</kar:Filter>`) as a sibling after `<kar:Fields>`. Mirror the pattern from `src/tools/practices.ts`.
+
+Confirmed in writing by Tebra customer care 2026-04-28 (case `!00Do00KPG6.!500Rb01RoFOp`). When adding a new operation, fetch the WSDL schema (`https://webservice.kareo.com/services/soap/2.1/KareoServices.svc?xsd=xsd0` or `?xsd=xsd7`) and follow the order shown in the `*Req` complexType `<xs:sequence>` — that is the source of truth.
+
+**Known follow-up**: several GET tools currently put filter values (StartDate, FromDate, PatientID, etc.) inside `<kar:Fields>` instead of `<kar:Filter>`. The WSDL types make the split explicit (`*FieldsToReturn` is boolean column toggles only; `*Filter` is string criteria). The SOAPAction bug fixed in 0.2.3 was masking these mis-placed values for the entire history of the package. Filtering doesn't actually narrow results in those tools today; fixing this is a per-tool refactor against each `*Filter` WSDL type. Tracked in `memory/project_tebra_fields_filter_followup.md`.
 
 ## Key Design Decisions
 
