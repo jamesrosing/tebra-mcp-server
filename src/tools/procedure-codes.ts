@@ -43,6 +43,7 @@ export async function handleProcedureCodeTool(
       <kar:Fields>
         ${searchTerm ? `<kar:Code>${escapeXml(searchTerm)}</kar:Code>` : ''}
       </kar:Fields>
+      <kar:Filter />
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetProcedureCodes', bodyXml);

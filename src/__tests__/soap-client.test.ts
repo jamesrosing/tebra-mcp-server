@@ -11,6 +11,7 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { soapRequest } from '../soap-client.js';
+import { handlePracticeTool } from '../tools/practices.js';
 import type { TebraConfig } from '../config.js';
 
 const config: TebraConfig = {
@@ -97,6 +98,43 @@ describe('Tebra SOAP client', () => {
     assert.ok(
       customerKeyIdx < passwordIdx && passwordIdx < userIdx,
       `RequestHeader order must be CustomerKey, Password, User — got positions ${customerKeyIdx}, ${passwordIdx}, ${userIdx}`
+    );
+  });
+
+  it('GetPractices body includes empty <kar:Filter /> to avoid server-side NullRef', async () => {
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      fetchCalls.push({ url, init });
+      return new Response(
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">' +
+          '<s:Body><GetPracticesResponse xmlns="http://www.kareo.com/api/schemas/">' +
+          '<GetPracticesResult><ErrorResponse><IsError>false</IsError></ErrorResponse>' +
+          '<Practices/></GetPracticesResult></GetPracticesResponse></s:Body>' +
+          '</s:Envelope>',
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await handlePracticeTool('tebra_get_practices', {}, config);
+
+    assert.equal(fetchCalls.length, 1);
+    const body = fetchCalls[0].init.body as string;
+
+    // Even though the WSDL marks Filter minOccurs=0, Tebra's server-side
+    // GetFilteredPractices NullRefs without it. Confirmed live 2026-04-28.
+    assert.match(
+      body,
+      /<kar:Filter\s*\/>/,
+      'GetPractices body must include an empty <kar:Filter /> element'
+    );
+
+    // Order matters too: Fields must come before Filter per WSDL sequence.
+    const fieldsEndIdx = body.indexOf('</kar:Fields>');
+    const fieldsSelfCloseIdx = body.search(/<kar:Fields\s*\/>/);
+    const fieldsAnyIdx = fieldsEndIdx > -1 ? fieldsEndIdx : fieldsSelfCloseIdx;
+    const filterIdx = body.search(/<kar:Filter\s*\/>/);
+    assert.ok(
+      fieldsAnyIdx > -1 && filterIdx > fieldsAnyIdx,
+      'Fields must precede Filter in the request body per WSDL sequence'
     );
   });
 });
