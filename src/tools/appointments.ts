@@ -128,6 +128,7 @@ export async function handleAppointmentTool(
         <kar:EndDate>${escapeXml(endDate)}</kar:EndDate>
         ${optionalFields.join('\n        ')}
       </kar:Fields>
+      <kar:Filter />
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetAppointments', bodyXml);

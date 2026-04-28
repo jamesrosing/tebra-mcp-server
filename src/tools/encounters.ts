@@ -111,6 +111,7 @@ export async function handleEncounterTool(
           <kar:Fields>
             <kar:EncounterID>${escapeXml(encounterId)}</kar:EncounterID>
           </kar:Fields>
+          <kar:Filter />
         </kar:request>`;
 
       const xml = await soapRequest(config, 'GetEncounterDetails', bodyXml);

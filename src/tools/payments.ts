@@ -133,6 +133,7 @@ export async function handlePaymentTool(
           <kar:Fields>
             ${fieldsXml}
           </kar:Fields>
+          <kar:Filter />
         </kar:request>`;
 
       const xml = await soapRequest(config, 'GetPayments', bodyXml);
