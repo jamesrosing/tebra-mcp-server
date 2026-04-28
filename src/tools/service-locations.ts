@@ -43,6 +43,7 @@ export async function handleServiceLocationTool(
       <kar:Fields>
         ${practiceName ? `<kar:PracticeName>${escapeXml(practiceName)}</kar:PracticeName>` : ''}
       </kar:Fields>
+      <kar:Filter />
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetServiceLocations', bodyXml);

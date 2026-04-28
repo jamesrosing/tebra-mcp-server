@@ -67,6 +67,7 @@ export async function handleBulkPatientTool(
       <kar:Fields>
         ${fieldsXml}
       </kar:Fields>
+      <kar:Filter />
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetAllPatients', bodyXml);
