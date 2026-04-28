@@ -14,6 +14,11 @@ import type { TebraConfig } from './config.js';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
 const SOAP_NAMESPACE = 'http://www.kareo.com/api/schemas/';
+// WCF service contract name. The SOAPAction header must be
+// `${SOAP_NAMESPACE}${SOAP_CONTRACT}/${operation}` — omitting the contract
+// segment causes a "ContractFilter mismatch at the EndpointDispatcher"
+// HTTP 500 from Kareo's WCF dispatcher.
+const SOAP_CONTRACT = 'KareoServices';
 
 // ─── Per-Endpoint Rate Limits (ms) from Tebra API Technical Guide ──
 
@@ -181,9 +186,9 @@ export async function soapRequest(
   action: string,
   bodyXml: string
 ): Promise<string> {
-  const soapAction = `${SOAP_NAMESPACE}${action}`;
-  // SOAP 1.1 requires SOAPAction to be a quoted string. WCF dispatchers can
-  // reject unquoted values with a ContractFilter mismatch.
+  const soapAction = `${SOAP_NAMESPACE}${SOAP_CONTRACT}/${action}`;
+  // SOAP 1.1 requires SOAPAction to be a quoted string (RFC 3902 §3.2).
+  // WCF dispatchers can reject unquoted values with a ContractFilter mismatch.
   const soapActionHeader = `"${soapAction}"`;
   const envelope = buildEnvelope(config, action, bodyXml);
   const debug = process.env.TEBRA_SOAP_DEBUG === '1' || process.env.TEBRA_SOAP_DEBUG === 'true';
