@@ -147,6 +147,7 @@ export async function handleChargeTool(
       <kar:Fields>
         ${fieldsXml}
       </kar:Fields>
+      <kar:Filter />
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetCharges', bodyXml);

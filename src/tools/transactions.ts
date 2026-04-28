@@ -103,6 +103,7 @@ export async function handleTransactionTool(
       <kar:Fields>
         ${fieldsXml}
       </kar:Fields>
+      <kar:Filter />
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetTransactions', bodyXml);

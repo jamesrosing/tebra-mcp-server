@@ -31,9 +31,14 @@ export async function handlePracticeTool(
     return { content: [{ type: 'text', text: `Unknown practice tool: ${name}` }] };
   }
 
+  // Empty <Filter /> is required even though the WSDL marks it minOccurs=0:
+  // Tebra's server-side GetFilteredPractices dereferences PracticeFilter
+  // without null-checking and throws NullReferenceException if it's absent.
+  // Confirmed live against Tebra and via customer care (2026-04-28).
   const bodyXml = `
     <kar:request>
       <kar:Fields />
+      <kar:Filter />
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetPractices', bodyXml);

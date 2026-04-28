@@ -170,6 +170,7 @@ export async function handlePatientTool(
           <kar:Fields>
             ${filterFields.join('\n            ')}
           </kar:Fields>
+          <kar:Filter />
         </kar:request>`;
 
       const xml = await soapRequest(config, 'GetPatients', bodyXml);
@@ -200,6 +201,7 @@ export async function handlePatientTool(
           <kar:Fields>
             <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
           </kar:Fields>
+          <kar:Filter />
         </kar:request>`;
 
       const xml = await soapRequest(config, 'GetPatient', bodyXml);
