@@ -64,4 +64,39 @@ describe('Tebra SOAP client', () => {
     );
     assert.match(body, /<kar:GetPractices>/);
   });
+
+  it('emits RequestHeader children in WSDL order: CustomerKey, Password, User', async () => {
+    globalThis.fetch = (async (url: string, init: RequestInit) => {
+      fetchCalls.push({ url, init });
+      return new Response(
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">' +
+          '<s:Body><GetPracticesResponse/></s:Body>' +
+          '</s:Envelope>',
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    await soapRequest(
+      config,
+      'GetPractices',
+      '<kar:request><kar:Fields /></kar:request>'
+    );
+
+    const body = fetchCalls[0].init.body as string;
+    const customerKeyIdx = body.indexOf('<kar:CustomerKey>');
+    const passwordIdx = body.indexOf('<kar:Password>');
+    const userIdx = body.indexOf('<kar:User>');
+
+    assert.ok(customerKeyIdx > -1, 'CustomerKey element must be present');
+    assert.ok(passwordIdx > -1, 'Password element must be present');
+    assert.ok(userIdx > -1, 'User element must be present');
+
+    // Tebra's WSDL declares the sequence as CustomerKey → Password → User.
+    // Sending User before Password causes authorization failures even with
+    // valid credentials.
+    assert.ok(
+      customerKeyIdx < passwordIdx && passwordIdx < userIdx,
+      `RequestHeader order must be CustomerKey, Password, User — got positions ${customerKeyIdx}, ${passwordIdx}, ${userIdx}`
+    );
+  });
 });
