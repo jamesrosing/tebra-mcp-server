@@ -198,19 +198,16 @@ These tools access clinical data via the Tebra FHIR R4 API. They require separat
 
 ## Rate Limits
 
-The Tebra SOAP API enforces per-endpoint rate limits. The server handles rate limiting with automatic retry and exponential backoff.
+The SOAP client enforces a minimum interval between calls per action, mirroring the throttling thresholds in the Tebra API Technical Guide. When a tool is called more frequently than its limit allows, the client sleeps just long enough to satisfy the interval before sending the request — calls are delayed, never dropped.
 
-| Endpoint Category | Limit | Window |
-|---|---|---|
-| Patient read operations | 200 requests | per minute |
-| Patient write operations | 50 requests | per minute |
-| Appointment operations | 200 requests | per minute |
-| Encounter operations | 100 requests | per minute |
-| Financial operations | 100 requests | per minute |
-| Document operations | 50 requests | per minute |
-| FHIR operations | 100 requests | per minute |
+| Action | Min interval between calls |
+|---|---|
+| `GetPatient` | 250 ms |
+| `GetPractices`, `GetProviders`, `GetServiceLocations`, `GetProcedureCodes`, `GetEncounterDetails`, `GetAppointment`, all `Create*` / `Update*` / `Delete*` | 500 ms |
+| `GetPatients`, `GetAppointments`, `GetAppointmentReasons`, `GetCharges`, `GetPayments`, `GetTransactions`, `GetExternalVendors`, `UpdatePatient` | 1000 ms |
+| `GetAllPatients`, `GetThrottles` | 5000 ms |
 
-Use `tebra_get_throttles` to check current rate limit status in real time.
+On top of client-side throttling, every SOAP call retries up to 3 times with exponential backoff (1s, 2s, 4s) before surfacing an error. Use `tebra_get_throttles` to query Tebra's server-side rate limit counters in real time.
 
 ## Example Workflows
 
@@ -327,8 +324,36 @@ The server wraps two Tebra APIs:
 git clone https://github.com/jamesrosing/tebra-mcp-server.git
 cd tebra-mcp-server
 npm install
-npm run dev  # Uses tsx for direct TypeScript execution
+
+npm run dev    # tsx — runs src/index.ts directly without a build step
+npm run build  # tsc — compiles to dist/
+npm test       # node:test via tsx — runs the SOAP client regression suite
+npm start      # node dist/index.js — runs the compiled output
 ```
+
+## Changelog
+
+### 0.2.5 (2026-04-28)
+- **fix(soap)**: every GET request body now includes a sibling `<kar:Filter />` after `<kar:Fields>`. Tebra's WSDL marks `Filter` as `minOccurs="0"`, but their server-side `GetFilteredX(...)` methods dereference the filter parameter without null-checking and throw `NullReferenceException` when it's absent. Tools patched: practices, providers, service-locations, procedure-codes, transactions, payments, charges, encounters, patients (search + get-by-id), bulk-patients, appointments. **Without 0.2.5, every GET call fails with a server-side NullRef.**
+- Added regression test asserting `<kar:Filter />` is emitted in WSDL-required order (Fields before Filter).
+
+### 0.2.4 (2026-04-28)
+- **fix(soap)**: `<RequestHeader>` children now serialize in WSDL-required order (`CustomerKey → Password → User`). The previous `CustomerKey → User → Password` order caused silent authorization failures even with valid credentials. Confirmed in writing by Tebra customer care.
+
+### 0.2.3 (2026-04-28)
+- **fix(soap)**: `SOAPAction` HTTP header now includes the `KareoServices/` WCF contract segment that Kareo's dispatcher requires. Versions 0.2.2 and earlier sent `${SOAP_NAMESPACE}${operation}`, which the dispatcher rejected with HTTP 500 (`ContractFilter mismatch at the EndpointDispatcher`). Header value is now also explicitly quoted per RFC 3902 §3.2.
+- Added a regression test asserting the exact header value (`npm test`).
+
+### 0.2.2 (2026-04-27)
+- **fix(soap)**: `RequestHeader` (User/Password/CustomerKey) is now placed inside the request body where Tebra's WSDL expects it, rather than in the SOAP envelope header.
+
+### 0.2.1 (2026-04-26)
+- Published to the MCP Registry under `com.jamesrosingmd/tebra` (verified-domain namespace).
+
+### 0.2.0
+- Initial public release.
+
+> **Upgrade urgently from 0.2.4 or earlier.** All prior releases hit at least one of the three wire-format bugs above, and only 0.2.5 satisfies all three of Tebra's WSDL/runtime requirements end-to-end.
 
 ## License
 
