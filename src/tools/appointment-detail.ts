@@ -3,7 +3,7 @@
  */
 
 import type { TebraConfig } from '../config.js';
-import { soapRequest, escapeXml, extractTag } from '../soap-client.js';
+import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -41,54 +41,78 @@ export async function handleAppointmentDetailTool(
     return { content: [{ type: 'text', text: 'appointmentId is required.' }] };
   }
 
+  // GetAppointment does NOT take the Fields/Filter shape the list endpoints
+  // use. Per the live WSDL (KareoServices.svc?xsd=xsd0):
+  //
+  //   GetAppointmentReq  = RequestBase + <Appointment> (type AppointmentRead)
+  //   AppointmentRead    = { AppointmentId: xs:long }        ← lowercase "d"
+  //   GetAppointmentResp = ResponseBase + <Appointment> (type AppointmentCreate)
+  //
+  // The old Fields-based envelope faulted on every call with "'EndElement'
+  // 'request' … is not expected. Expecting element 'Appointment'."
   const bodyXml = `
     <kar:request>
-      <kar:Fields>
-        <kar:AppointmentID>${escapeXml(appointmentId)}</kar:AppointmentID>
-      </kar:Fields>
+      <kar:Appointment>
+        <kar:AppointmentId>${escapeXml(appointmentId)}</kar:AppointmentId>
+      </kar:Appointment>
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetAppointment', bodyXml);
-  const apptBlock = extractTag(xml, 'Appointment') || extractTag(xml, 'AppointmentData');
 
-  if (!apptBlock) {
+  const foundId = extractTag(xml, 'AppointmentId') || extractTag(xml, 'AppointmentID');
+  if (!foundId) {
     return {
       content: [{ type: 'text', text: `Appointment not found: ${appointmentId}` }],
     };
   }
 
+  // Response is the WSDL AppointmentCreate shape: patient nested under
+  // <PatientSummary> (group attendees under <PatientSummaries>), ISO
+  // StartTime/EndTime, AppointmentStatus, enum-letter AppointmentType.
+  const summary = extractTag(xml, 'PatientSummary');
+  const summaries = extractTag(xml, 'PatientSummaries');
+  const groupPatients = summaries
+    ? extractAllTags(summaries, 'GroupPatientSummary')
+        .map((block) => ({
+          patientId: extractTag(block, 'PatientId'),
+          patientName: `${extractTag(block, 'FirstName')} ${extractTag(block, 'LastName')}`.trim(),
+        }))
+        .filter((p) => p.patientId || p.patientName)
+    : [];
+
   const detail = {
-    appointmentId: extractTag(apptBlock, 'AppointmentID') || extractTag(apptBlock, 'ID'),
-    patientId: extractTag(apptBlock, 'PatientID'),
-    patientName: `${extractTag(apptBlock, 'PatientFirstName')} ${extractTag(apptBlock, 'PatientLastName')}`.trim(),
-    providerId: extractTag(apptBlock, 'ProviderID'),
-    providerName: extractTag(apptBlock, 'ProviderFullName'),
-    serviceLocationId: extractTag(apptBlock, 'ServiceLocationID'),
-    serviceLocationName: extractTag(apptBlock, 'ServiceLocationName'),
-    startDate: extractTag(apptBlock, 'StartDate'),
-    endDate: extractTag(apptBlock, 'EndDate'),
-    duration: extractTag(apptBlock, 'Duration'),
-    appointmentType: extractTag(apptBlock, 'AppointmentType'),
-    appointmentReason: extractTag(apptBlock, 'AppointmentReason'),
-    status: extractTag(apptBlock, 'Status') || extractTag(apptBlock, 'AppointmentStatus'),
-    confirmationStatus: extractTag(apptBlock, 'ConfirmationStatus'),
-    notes: extractTag(apptBlock, 'Notes'),
-    recurrenceRule: extractTag(apptBlock, 'RecurrenceRule'),
-    recurrenceId: extractTag(apptBlock, 'RecurrenceID'),
-    groupId: extractTag(apptBlock, 'GroupID'),
-    groupName: extractTag(apptBlock, 'GroupName'),
-    resource1: extractTag(apptBlock, 'Resource1'),
-    resource2: extractTag(apptBlock, 'Resource2'),
-    resource3: extractTag(apptBlock, 'Resource3'),
-    resource4: extractTag(apptBlock, 'Resource4'),
-    resource5: extractTag(apptBlock, 'Resource5'),
-    resource6: extractTag(apptBlock, 'Resource6'),
-    resource7: extractTag(apptBlock, 'Resource7'),
-    resource8: extractTag(apptBlock, 'Resource8'),
-    resource9: extractTag(apptBlock, 'Resource9'),
-    resource10: extractTag(apptBlock, 'Resource10'),
-    createdDate: extractTag(apptBlock, 'CreatedDate'),
-    lastModifiedDate: extractTag(apptBlock, 'LastModifiedDate'),
+    appointmentId: foundId,
+    appointmentUuid: extractTag(xml, 'AppointmentUUID'),
+    appointmentName: extractTag(xml, 'AppointmentName'),
+    patientId: summary ? extractTag(summary, 'PatientId') : '',
+    patientName: summary
+      ? `${extractTag(summary, 'FirstName')} ${extractTag(summary, 'LastName')}`.trim()
+      : '',
+    patientDateOfBirth: summary ? extractTag(summary, 'DateOfBirth') : '',
+    patientCaseId: extractTag(xml, 'PatientCaseId'),
+    providerId: extractTag(xml, 'ProviderId'),
+    resourceId: extractTag(xml, 'ResourceId'),
+    resourceIds: extractTag(xml, 'ResourceIds'),
+    serviceLocationId: extractTag(xml, 'ServiceLocationId'),
+    startTime: extractTag(xml, 'StartTime'),
+    endTime: extractTag(xml, 'EndTime'),
+    appointmentType: extractTag(xml, 'AppointmentType'),
+    appointmentMode: extractTag(xml, 'AppointmentMode'),
+    appointmentReasonId: extractTag(xml, 'AppointmentReasonId'),
+    status: extractTag(xml, 'AppointmentStatus'),
+    notes: extractTag(xml, 'Notes'),
+    isRecurring: extractTag(xml, 'IsRecurring'),
+    recurrenceRule: extractTag(xml, 'RecurrenceRule'),
+    occurrenceId: extractTag(xml, 'OccurrenceId'),
+    isGroupAppointment: extractTag(xml, 'IsGroupAppointment'),
+    maxAttendees: extractTag(xml, 'MaxAttendees'),
+    attendeesCount: extractTag(xml, 'AttendeesCount'),
+    groupPatients,
+    insurancePolicyAuthorizationId: extractTag(xml, 'InsurancePolicyAuthorizationId'),
+    wasCreatedOnline: extractTag(xml, 'WasCreatedOnline'),
+    forRecare: extractTag(xml, 'ForRecare'),
+    createdAt: extractTag(xml, 'CreatedAt'),
+    updatedAt: extractTag(xml, 'UpdatedAt'),
   };
 
   return {
