@@ -333,6 +333,11 @@ npm start      # node dist/index.js — runs the compiled output
 
 ## Changelog
 
+### 0.2.6 (2026-07-06)
+- **fix(get_appointment_detail)**: `GetAppointment` does NOT take the `Fields`/`Filter` request shape the list endpoints use. Per the live WSDL (`KareoServices.svc?xsd=xsd0`), `GetAppointmentReq = RequestBase + <Appointment>{ AppointmentId: xs:long }` (lowercase "d"). The old envelope faulted on every call with `'EndElement' 'request' … Expecting element 'Appointment'`, so `tebra_get_appointment_detail` never worked against live Tebra.
+- The response is the WSDL `AppointmentCreate` shape — patient nested under `<PatientSummary>` (group attendees under `<PatientSummaries>`), ISO `StartTime`/`EndTime`, `AppointmentStatus`, enum-letter `AppointmentType`. The tool's output now maps these real fields (patient name + DOB, appointment mode, reason id, recurrence, group attendees, audit timestamps) instead of the fictional `AppointmentData` field set.
+- Verified live: full detail returned for a real appointment. Contributor lesson: single-record Tebra ops can have entirely different WSDL contracts from their list counterparts — read `?xsd=xsd0` before assuming the Fields/Filter pattern.
+
 ### 0.2.5 (2026-04-28)
 - **fix(soap)**: every GET request body now includes a sibling `<kar:Filter />` after `<kar:Fields>`. Tebra's WSDL marks `Filter` as `minOccurs="0"`, but their server-side `GetFilteredX(...)` methods dereference the filter parameter without null-checking and throw `NullReferenceException` when it's absent. Tools patched: practices, providers, service-locations, procedure-codes, transactions, payments, charges, encounters, patients (search + get-by-id), bulk-patients, appointments. **Without 0.2.5, every GET call fails with a server-side NullRef.**
 - Added regression test asserting `<kar:Filter />` is emitted in WSDL-required order (Fields before Filter).
