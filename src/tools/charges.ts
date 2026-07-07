@@ -2,26 +2,27 @@
  * Tebra MCP tools: Charge retrieval.
  *
  * Request body layout is bound to the WSDL sequence order (xsd0):
- *   GetChargesReq → Fields (ChargeFieldsToReturn — MUST be sent EMPTY, see below)
+ *   GetChargesReq → Fields (ChargeFieldsToReturn, minOccurs=1)
  *                 → Filter (ChargeFilter: string criteria, minOccurs=0 but required
  *                   in practice — see wire-format quirk #3 in CLAUDE.md)
+ *
+ * Fields is emitted as an EMPTY element. Sending explicit boolean column
+ * toggles triggers an empty projection server-side: every response contains a
+ * single phantom ChargeData block with no values (wire-format quirk #4).
+ * Observed live 2026-07-07 via A/B against production (explicit toggles →
+ * phantom empty block; empty <kar:Fields /> → full default projection).
+ * Reportedly first documented 2026-05-03 in the heme repo (not verified here).
+ * The default projection includes TotalCharges and the PrimaryInsurance*
+ * payment/adjustment/allowed/deductible columns.
+ *
  * WCF deserializes sequences in declared order and silently skips out-of-order
  * or unknown members, so the Filter block MUST stay in WSDL order.
- *
- * PROJECTION INVERSION (verified live 2026-07-07): sending ANY explicit
- * <kar:X>true</kar:X> toggles in <kar:Fields> makes Tebra return ONE empty
- * <ChargeData/> placeholder per call — no real rows, no fault, regardless of
- * filter matches. An empty <kar:Fields/> returns the FULL record: ID, dates,
- * ProcedureCode, Status, TotalCharges/TotalBalance/InsuranceBalance/
- * PatientBalance, and the PrimaryInsurance* adjudication columns (payment,
- * contract adjustment + reason, secondary adjustment + reason, adjudication
- * date). Same quirk as GetPatients. Never reintroduce column toggles here.
  */
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
 
-// ─── WSDL Sequence Table (source of truth: ?xsd=xsd0) ──────────
+// ─── WSDL Sequence Table (source of truth: ?xsd=xsd0) ───────────
 
 /**
  * [MCP arg key, ChargeFilter element] in WSDL sequence order.
@@ -74,49 +75,20 @@ export function buildGetChargesRequestBody(args: Record<string, unknown>): strin
       ? `<kar:Filter>\n        ${filterParts.join('\n        ')}\n      </kar:Filter>`
       : '<kar:Filter />';
 
-  // Fields stays empty: full-record projection (see projection-inversion note).
+  // Fields stays empty — see quirk #4 note in the file header.
   return `
     <kar:request>
-      <kar:Fields/>
+      <kar:Fields />
       ${filterXml}
     </kar:request>`;
 }
 
 // ─── Response Parser (exported for tests) ───────────────────────
 
-export interface ChargeRecord {
-  chargeId: string;
-  encounterId: string;
-  encounterStatus: string;
-  patientId: string;
-  patientName: string;
-  procedureCode: string;
-  procedureName: string;
-  modifier1: string;
-  serviceDate: string;
-  postingDate: string;
-  status: string;
-  totalCharges: string;
-  totalBalance: string;
-  insuranceBalance: string;
-  patientBalance: string;
-  payer: string;
-  planName: string;
-  adjudicationDate: string;
-  insurancePayment: string;
-  contractAdjustment: string;
-  adjustmentReason: string;
-  secondaryAdjustmentReason: string;
-  renderingProvider: string;
-}
+export function parseChargesResponse(xml: string): Array<Record<string, string>> {
+  const blocks = extractAllTags(xml, 'ChargeData');
 
-/**
- * Tebra emits a single empty <ChargeData/> placeholder when a query matches
- * nothing (and when the projection is broken) — a block with no ID is not a
- * charge and must be dropped, or callers count phantom rows.
- */
-export function parseChargeBlocks(xml: string): ChargeRecord[] {
-  return extractAllTags(xml, 'ChargeData')
+  return blocks
     .map((block) => ({
       chargeId: extractTag(block, 'ID'),
       encounterId: extractTag(block, 'EncounterID'),
@@ -137,11 +109,15 @@ export function parseChargeBlocks(xml: string): ChargeRecord[] {
       planName: extractTag(block, 'PrimaryInsurancePlanName'),
       adjudicationDate: extractTag(block, 'PrimaryInsuranceAdjudicationDate'),
       insurancePayment: extractTag(block, 'PrimaryInsuranceInsurancePayment'),
+      allowedAmount: extractTag(block, 'PrimaryInsuranceInsuranceAllowed'),
+      deductible: extractTag(block, 'PrimaryInsuranceInsuranceDeductible'),
       contractAdjustment: extractTag(block, 'PrimaryInsuranceInsuranceContractAdjustment'),
       adjustmentReason: extractTag(block, 'PrimaryInsuranceInsuranceContractAdjustmentReason'),
       secondaryAdjustmentReason: extractTag(block, 'PrimaryInsuranceInsuranceSecondaryAdjustmentReason'),
       renderingProvider: extractTag(block, 'RenderingProviderName'),
     }))
+    // Tebra emits one phantom empty ChargeData block when a response carries no
+    // rows (and always under quirk #4). A row with no charge ID is not a charge.
     .filter((charge) => charge.chargeId !== '');
 }
 
@@ -151,7 +127,7 @@ export const chargeTools = [
   {
     name: 'tebra_get_charges',
     description:
-      'Get charges from Tebra with flexible filters: date range, patient name, provider, procedure/diagnosis codes, billing status, encounter status, and more. Returns charge details with payer, adjudication, adjustment reasons, amounts, and balances.',
+      'Get charges from Tebra with flexible filters: date range, patient name, provider, procedure/diagnosis codes, billing status, encounter status, and more. Returns charge details with payer, adjudication, adjustment reasons, amounts, and balances. Note: posting-date range is limited to 60 days server-side.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -169,11 +145,11 @@ export const chargeTools = [
         },
         fromPostingDate: {
           type: 'string',
-          description: 'Posting date range start (YYYY-MM-DD)',
+          description: 'Posting date range start (YYYY-MM-DD); max 60 days from toPostingDate',
         },
         toPostingDate: {
           type: 'string',
-          description: 'Posting date range end (YYYY-MM-DD)',
+          description: 'Posting date range end (YYYY-MM-DD); max 60 days from fromPostingDate',
         },
         batchNumber: {
           type: 'string',
@@ -194,9 +170,7 @@ export const chargeTools = [
         status: {
           type: 'string',
           description:
-            "Charge status filter. Observed live values: 'Pending', 'Completed', " +
-            "'Error - Rejection', 'Voided', 'Ready'. Note: at least some accounts have " +
-            "NO 'Denied' status — rejected/denied claims surface as 'Error - Rejection'.",
+            "Charge status filter. Observed values include 'Pending', 'Completed', 'Error - Rejection', 'Voided', 'Ready'. Note: 'Denied' is not a status Tebra uses; rejected claims carry 'Error - Rejection'.",
         },
         billedTo: {
           type: 'string',
@@ -250,7 +224,7 @@ export async function handleChargeTool(
 
   const bodyXml = buildGetChargesRequestBody(args);
   const xml = await soapRequest(config, 'GetCharges', bodyXml);
-  const charges = parseChargeBlocks(xml);
+  const charges = parseChargesResponse(xml);
 
   if (charges.length === 0) {
     return {

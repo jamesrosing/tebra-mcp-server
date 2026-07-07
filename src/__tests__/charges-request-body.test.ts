@@ -1,27 +1,24 @@
 /**
- * Regression tests for the GetCharges request body and response parsing.
+ * Regression tests for the GetCharges request body and response parser.
  *
- * Two WCF quirks are pinned here:
- * 1. Fields/Filter misplacement: filter criteria placed inside <kar:Fields>
- *    are silently skipped by WCF (unknown members of ChargeFieldsToReturn).
- *    Criteria belong in <kar:Filter>, in WSDL sequence order.
- * 2. Projection inversion: ANY explicit <kar:X>true</kar:X> toggle set makes
- *    Tebra return ONE empty <ChargeData/> placeholder per call — zero real
- *    fields regardless of filter matches (verified live 2026-07-07 against a
- *    12-month window set; same quirk documented for GetPatients). Only an
- *    empty <kar:Fields/> returns the full record, including the
- *    PrimaryInsurance* adjudication columns this tool exists to surface.
+ * Guards two production failures:
+ * 1. Filter criteria placed inside <kar:Fields> are silently skipped by WCF —
+ *    every GetCharges call in package history before 0.3.0 was unfiltered.
+ * 2. Explicit boolean column toggles in <kar:Fields> trigger an empty
+ *    projection server-side (quirk #4, hit live by 0.3.0): responses carry one
+ *    phantom empty ChargeData block. Fields must be an empty element, and the
+ *    parser must drop rows with no charge ID.
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGetChargesRequestBody, parseChargeBlocks } from '../tools/charges.js';
+import { buildGetChargesRequestBody, parseChargesResponse } from '../tools/charges.js';
 
-test('filter criteria land inside <kar:Filter>, never inside <kar:Fields>', () => {
+test('filter criteria land inside <kar:Filter>', () => {
   const body = buildGetChargesRequestBody({
     fromPostingDate: '2025-07-06',
     toPostingDate: '2026-07-06',
-    status: 'Denied',
+    status: 'Error - Rejection',
   });
 
   const filterMatch = body.match(/<kar:Filter>([\s\S]*?)<\/kar:Filter>/);
@@ -30,50 +27,22 @@ test('filter criteria land inside <kar:Filter>, never inside <kar:Fields>', () =
 
   assert.match(filter, /<kar:FromPostingDate>2025-07-06<\/kar:FromPostingDate>/);
   assert.match(filter, /<kar:ToPostingDate>2026-07-06<\/kar:ToPostingDate>/);
-  assert.match(filter, /<kar:Status>Denied<\/kar:Status>/);
+  assert.match(filter, /<kar:Status>Error - Rejection<\/kar:Status>/);
 });
 
-test('<kar:Fields> is EMPTY — explicit toggles trigger the WCF empty-projection quirk', () => {
-  const body = buildGetChargesRequestBody({ status: 'Denied' });
-  assert.match(body, /<kar:Fields\s*\/>/, 'Fields must be self-closing (full-record projection)');
+test('Fields is emitted as an empty element — explicit toggles trigger the empty-projection quirk (#4)', () => {
+  const body = buildGetChargesRequestBody({ status: 'Pending' });
+  assert.match(body, /<kar:Fields \/>/, 'Fields must be an empty element');
   assert.doesNotMatch(
     body,
     /<kar:Fields>[\s\S]*?<\/kar:Fields>/,
-    'explicit column toggles return one empty ChargeData placeholder live — never send them'
+    'Fields must not contain column toggles'
   );
-});
-
-test('parseChargeBlocks drops the phantom empty <ChargeData/> placeholder', () => {
-  const xml = `
-    <GetChargesResult>
-      <Charges>
-        <ChargeData/>
-        <ChargeData>
-          <ID>59611</ID>
-          <ProcedureCode>14060</ProcedureCode>
-          <Status>Error - Rejection</Status>
-          <TotalCharges>1200.0000</TotalCharges>
-          <PrimaryInsuranceCompanyName>Cigna</PrimaryInsuranceCompanyName>
-          <PrimaryInsuranceInsurancePayment>0.0000</PrimaryInsuranceInsurancePayment>
-        </ChargeData>
-      </Charges>
-    </GetChargesResult>`;
-  const charges = parseChargeBlocks(xml);
-  assert.equal(charges.length, 1, 'empty placeholder block must be filtered out');
-  assert.equal(charges[0].chargeId, '59611');
-  assert.equal(charges[0].status, 'Error - Rejection');
-  assert.equal(charges[0].totalCharges, '1200.0000');
-  assert.equal(charges[0].payer, 'Cigna');
-});
-
-test('parseChargeBlocks returns [] for a no-match response (single empty placeholder)', () => {
-  const xml = '<GetChargesResult><Charges><ChargeData/></Charges></GetChargesResult>';
-  assert.deepEqual(parseChargeBlocks(xml), []);
 });
 
 test('Filter members appear in WSDL sequence order', () => {
   const body = buildGetChargesRequestBody({
-    status: 'Denied',
+    status: 'Pending',
     fromPostingDate: '2025-07-06',
     toPostingDate: '2026-07-06',
     procedureCode: '14301',
@@ -107,7 +76,7 @@ test('includeUnapprovedCharges serializes as T/F string in the Filter', () => {
   );
 });
 
-test('no criteria → self-closing <kar:Filter /> still emitted (wire-format quirk #3)', () => {
+test('no criteria -> self-closing <kar:Filter /> still emitted (wire-format quirk #3)', () => {
   const body = buildGetChargesRequestBody({});
   assert.match(body, /<kar:Filter \/>/);
   assert.doesNotMatch(body, /<kar:Filter>[\s\S]*<\/kar:Filter>/);
@@ -119,4 +88,46 @@ test('patientId throws instead of silently not filtering (fail closed)', () => {
     /patientName/,
     'unsupported filter args must error, not silently return unfiltered data'
   );
+});
+
+test('parser drops the phantom empty ChargeData block', () => {
+  const xml = `
+    <GetChargesResponse>
+      <Charges>
+        <ChargeData>
+          <ID></ID>
+          <PatientName></PatientName>
+          <Status></Status>
+        </ChargeData>
+      </Charges>
+    </GetChargesResponse>`;
+  const charges = parseChargesResponse(xml);
+  assert.equal(charges.length, 0, 'a ChargeData block with no ID is not a charge');
+});
+
+test('parser maps a real ChargeData block', () => {
+  const xml = `
+    <GetChargesResponse>
+      <Charges>
+        <ChargeData>
+          <ID>98765</ID>
+          <PatientID>111</PatientID>
+          <PatientName>DOE, JANE</PatientName>
+          <ProcedureCode>14060</ProcedureCode>
+          <ServiceStartDate>6/2/2026</ServiceStartDate>
+          <Status>Error - Rejection</Status>
+          <TotalCharges>1200.00</TotalCharges>
+          <PrimaryInsuranceCompanyName>Cigna</PrimaryInsuranceCompanyName>
+          <PrimaryInsuranceInsurancePayment>0.00</PrimaryInsuranceInsurancePayment>
+          <PrimaryInsuranceInsuranceAllowed>0.00</PrimaryInsuranceInsuranceAllowed>
+        </ChargeData>
+      </Charges>
+    </GetChargesResponse>`;
+  const charges = parseChargesResponse(xml);
+  assert.equal(charges.length, 1);
+  assert.equal(charges[0].chargeId, '98765');
+  assert.equal(charges[0].status, 'Error - Rejection');
+  assert.equal(charges[0].payer, 'Cigna');
+  assert.equal(charges[0].totalCharges, '1200.00');
+  assert.equal(charges[0].allowedAmount, '0.00');
 });
