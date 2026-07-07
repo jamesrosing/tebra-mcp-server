@@ -1,22 +1,21 @@
 /**
- * Regression tests for the GetCharges request body.
+ * Regression tests for the GetCharges request body and response parsing.
  *
- * Guards against the Fields/Filter misplacement bug: filter criteria placed
- * inside <kar:Fields> are silently skipped by WCF (unknown members of
- * ChargeFieldsToReturn) — or worse, collide with a boolean column toggle
- * ('Denied' cannot be parsed as Boolean). Criteria belong in <kar:Filter>,
- * in WSDL sequence order.
+ * Two WCF quirks are pinned here:
+ * 1. Fields/Filter misplacement: filter criteria placed inside <kar:Fields>
+ *    are silently skipped by WCF (unknown members of ChargeFieldsToReturn).
+ *    Criteria belong in <kar:Filter>, in WSDL sequence order.
+ * 2. Projection inversion: ANY explicit <kar:X>true</kar:X> toggle set makes
+ *    Tebra return ONE empty <ChargeData/> placeholder per call — zero real
+ *    fields regardless of filter matches (verified live 2026-07-07 against a
+ *    12-month window set; same quirk documented for GetPatients). Only an
+ *    empty <kar:Fields/> returns the full record, including the
+ *    PrimaryInsurance* adjudication columns this tool exists to surface.
  */
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildGetChargesRequestBody } from '../tools/charges.js';
-
-function fieldsBlock(body: string): string {
-  const m = body.match(/<kar:Fields>([\s\S]*?)<\/kar:Fields>/);
-  assert.ok(m, 'Fields block must be present (minOccurs=1 in GetChargesReq)');
-  return m[1];
-}
+import { buildGetChargesRequestBody, parseChargeBlocks } from '../tools/charges.js';
 
 test('filter criteria land inside <kar:Filter>, never inside <kar:Fields>', () => {
   const body = buildGetChargesRequestBody({
@@ -32,20 +31,44 @@ test('filter criteria land inside <kar:Filter>, never inside <kar:Fields>', () =
   assert.match(filter, /<kar:FromPostingDate>2025-07-06<\/kar:FromPostingDate>/);
   assert.match(filter, /<kar:ToPostingDate>2026-07-06<\/kar:ToPostingDate>/);
   assert.match(filter, /<kar:Status>Denied<\/kar:Status>/);
-
-  const fields = fieldsBlock(body);
-  assert.doesNotMatch(fields, /Denied/, 'criteria must not leak into Fields');
-  assert.doesNotMatch(fields, /2025-07-06/, 'criteria must not leak into Fields');
 });
 
-test('<kar:Fields> contains only boolean column toggles set to true', () => {
+test('<kar:Fields> is EMPTY — explicit toggles trigger the WCF empty-projection quirk', () => {
   const body = buildGetChargesRequestBody({ status: 'Denied' });
-  const fields = fieldsBlock(body);
-  const values = [...fields.matchAll(/<kar:[A-Za-z0-9]+>([^<]*)<\/kar:/g)].map((m) => m[1]);
-  assert.ok(values.length > 0, 'Fields must request explicit columns');
-  for (const v of values) {
-    assert.equal(v, 'true', `Fields toggle value must be 'true', got '${v}'`);
-  }
+  assert.match(body, /<kar:Fields\s*\/>/, 'Fields must be self-closing (full-record projection)');
+  assert.doesNotMatch(
+    body,
+    /<kar:Fields>[\s\S]*?<\/kar:Fields>/,
+    'explicit column toggles return one empty ChargeData placeholder live — never send them'
+  );
+});
+
+test('parseChargeBlocks drops the phantom empty <ChargeData/> placeholder', () => {
+  const xml = `
+    <GetChargesResult>
+      <Charges>
+        <ChargeData/>
+        <ChargeData>
+          <ID>59611</ID>
+          <ProcedureCode>14060</ProcedureCode>
+          <Status>Error - Rejection</Status>
+          <TotalCharges>1200.0000</TotalCharges>
+          <PrimaryInsuranceCompanyName>Cigna</PrimaryInsuranceCompanyName>
+          <PrimaryInsuranceInsurancePayment>0.0000</PrimaryInsuranceInsurancePayment>
+        </ChargeData>
+      </Charges>
+    </GetChargesResult>`;
+  const charges = parseChargeBlocks(xml);
+  assert.equal(charges.length, 1, 'empty placeholder block must be filtered out');
+  assert.equal(charges[0].chargeId, '59611');
+  assert.equal(charges[0].status, 'Error - Rejection');
+  assert.equal(charges[0].totalCharges, '1200.0000');
+  assert.equal(charges[0].payer, 'Cigna');
+});
+
+test('parseChargeBlocks returns [] for a no-match response (single empty placeholder)', () => {
+  const xml = '<GetChargesResult><Charges><ChargeData/></Charges></GetChargesResult>';
+  assert.deepEqual(parseChargeBlocks(xml), []);
 });
 
 test('Filter members appear in WSDL sequence order', () => {

@@ -91,7 +91,7 @@ src/integrations/
 
 ### Tebra SOAP Wire-Format Quirks
 
-Tebra's WCF service rejects calls in three subtle ways that compound — each was fixed in a separate release because the previous bug masked the next. All of these are now centralized in `src/soap-client.ts` (for #1 and #2) and required of every GET tool's request body (for #3).
+Tebra's WCF service rejects calls in four subtle ways that compound — each was fixed in a separate release because the previous bug masked the next. #1 and #2 are centralized in `src/soap-client.ts`; #3 and #4 are required of every GET tool's request body.
 
 1. **`SOAPAction` header must include the `KareoServices/` contract segment** — `"http://www.kareo.com/api/schemas/KareoServices/<Operation>"`, double-quoted per RFC 3902 §3.2. Without `KareoServices/`: HTTP 500 `ContractFilter mismatch at the EndpointDispatcher`. Handled in `soapRequest()` automatically.
 
@@ -99,9 +99,13 @@ Tebra's WCF service rejects calls in three subtle ways that compound — each wa
 
 3. **`<Filter />` must appear in every GET request body**, even when the WSDL marks it `minOccurs="0"`. Tebra's server-side `GetFilteredX(...)` methods dereference the filter parameter without null-checking and `NullReferenceException` if it's absent. Each GET tool is responsible for emitting `<kar:Filter />` (or a populated `<kar:Filter>...</kar:Filter>`) as a sibling after `<kar:Fields>`. Mirror the pattern from `src/tools/practices.ts`.
 
-Confirmed in writing by Tebra customer care 2026-04-28 (case `!00Do00KPG6.!500Rb01RoFOp`). When adding a new operation, fetch the WSDL schema (`https://webservice.kareo.com/services/soap/2.1/KareoServices.svc?xsd=xsd0` or `?xsd=xsd7`) and follow the order shown in the `*Req` complexType `<xs:sequence>` — that is the source of truth.
+4. **List-GET projection inversion: `<kar:Fields/>` must be EMPTY.** Sending ANY explicit `<kar:X>true</kar:X>` column toggles makes Tebra return a single empty `<ChargeData/>`-style placeholder per call — zero real fields, no fault, regardless of filter matches (verified live 2026-07-07 on GetCharges; the EPIC-Notes connector documented the same behavior for GetCharges and GetPatients on 2026-05-03/2026-06-30). An empty `<kar:Fields/>` returns the FULL record, including columns the toggle form can never surface (e.g. the `PrimaryInsurance*` adjudication set). Response parsers must also drop placeholder blocks with an empty `<ID>`, or a no-match response counts as one phantom row. `src/tools/charges.ts` (0.3.1) is the reference implementation.
 
-**Known follow-up**: several GET tools currently put filter values (StartDate, FromDate, PatientID, etc.) inside `<kar:Fields>` instead of `<kar:Filter>`. The WSDL types make the split explicit (`*FieldsToReturn` is boolean column toggles only; `*Filter` is string criteria). The SOAPAction bug fixed in 0.2.3 was masking these mis-placed values for the entire history of the package. Filtering doesn't actually narrow results in those tools today; fixing this is a per-tool refactor against each `*Filter` WSDL type. Tracked in `memory/project_tebra_fields_filter_followup.md`.
+Confirmed in writing by Tebra customer care 2026-04-28 (case `!00Do00KPG6.!500Rb01RoFOp`). When adding a new operation, fetch the WSDL schema (`https://webservice.kareo.com/services/soap/2.1/KareoServices.svc?xsd=xsd0` or `?xsd=xsd7`) and follow the order shown in the `*Req` complexType `<xs:sequence>` — that is the source of truth for Filter member order (but per quirk #4, never emit Fields toggles).
+
+**Live-observed charge `Status` enum** (12-month pull, 2026-07-07): `Pending`, `Completed`, `Error - Rejection`, `Voided`, `Ready`. At least some accounts have NO `Denied` value — rejected/denied claims surface as `Error - Rejection`. Tebra also enforces a server-side **≤60-day posting-date window** on GetCharges (validation fault beyond that; prefer ≤30-day windows — wider windows have been observed to silently return 0).
+
+**Known follow-up**: several GET tools currently put filter values (StartDate, FromDate, PatientID, etc.) inside `<kar:Fields>` instead of `<kar:Filter>`. The WSDL types make the split explicit (`*FieldsToReturn` is boolean column toggles only; `*Filter` is string criteria). The SOAPAction bug fixed in 0.2.3 was masking these mis-placed values for the entire history of the package. Filtering doesn't actually narrow results in those tools today; fixing this is a per-tool refactor against each `*Filter` WSDL type — follow the charges.ts template: criteria into `<kar:Filter>` in WSDL sequence order, `<kar:Fields/>` empty, parser drops empty-ID placeholder blocks. Tracked in `memory/project_tebra_fields_filter_followup.md`.
 
 ## Key Design Decisions
 

@@ -333,6 +333,16 @@ npm start      # node dist/index.js — runs the compiled output
 
 ## Changelog
 
+### 0.3.1 (2026-07-07)
+- **fix(get_charges)**: `<kar:Fields/>` is now sent EMPTY. 0.3.0's explicit column toggles triggered Tebra's projection-inversion quirk — every call returned a single empty `<ChargeData/>` placeholder (zero real fields, no fault) regardless of filter matches. Empty Fields returns the full record, including the `PrimaryInsurance*` adjudication columns (payment, contract adjustment + reason, secondary adjustment + reason, adjudication date) the explicit toggles were meant to surface.
+- Response parser (`parseChargeBlocks`, exported) drops the empty placeholder block — a no-match response previously counted as one phantom all-empty charge.
+- `status` filter documented with live-observed enum values: `Pending`, `Completed`, `Error - Rejection`, `Voided`, `Ready`. At least some accounts have NO `Denied` status — denials surface as `Error - Rejection`.
+- Verified live against production Tebra: a 12-month, 14-window pull returned 293 real charges with populated financials; server-side `Status` filtering confirmed working.
+
+### 0.3.0 (2026-07-06)
+- **fix(get_charges)**: filter criteria moved out of `<kar:Fields>` into `<kar:Filter>`, emitted in WSDL (xsd0) sequence order — inside Fields they were silently skipped by WCF, so GetCharges returned unfiltered data for the package's entire history. `patientId` now throws (ChargeFilter has no patient ID member; use `patientName`).
+- Note: Tebra enforces a server-side ≤60-day posting-date window on GetCharges.
+
 ### 0.2.6 (2026-07-06)
 - **fix(get_appointment_detail)**: `GetAppointment` does NOT take the `Fields`/`Filter` request shape the list endpoints use. Per the live WSDL (`KareoServices.svc?xsd=xsd0`), `GetAppointmentReq = RequestBase + <Appointment>{ AppointmentId: xs:long }` (lowercase "d"). The old envelope faulted on every call with `'EndElement' 'request' … Expecting element 'Appointment'`, so `tebra_get_appointment_detail` never worked against live Tebra.
 - The response is the WSDL `AppointmentCreate` shape — patient nested under `<PatientSummary>` (group attendees under `<PatientSummaries>`), ISO `StartTime`/`EndTime`, `AppointmentStatus`, enum-letter `AppointmentType`. The tool's output now maps these real fields (patient name + DOB, appointment mode, reason id, recurrence, group attendees, audit timestamps) instead of the fictional `AppointmentData` field set.

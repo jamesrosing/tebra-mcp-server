@@ -2,48 +2,26 @@
  * Tebra MCP tools: Charge retrieval.
  *
  * Request body layout is bound to the WSDL sequence order (xsd0):
- *   GetChargesReq → Fields (ChargeFieldsToReturn: boolean column toggles, minOccurs=1)
+ *   GetChargesReq → Fields (ChargeFieldsToReturn — MUST be sent EMPTY, see below)
  *                 → Filter (ChargeFilter: string criteria, minOccurs=0 but required
  *                   in practice — see wire-format quirk #3 in CLAUDE.md)
  * WCF deserializes sequences in declared order and silently skips out-of-order
- * or unknown members, so both blocks below MUST stay in WSDL order.
+ * or unknown members, so the Filter block MUST stay in WSDL order.
+ *
+ * PROJECTION INVERSION (verified live 2026-07-07): sending ANY explicit
+ * <kar:X>true</kar:X> toggles in <kar:Fields> makes Tebra return ONE empty
+ * <ChargeData/> placeholder per call — no real rows, no fault, regardless of
+ * filter matches. An empty <kar:Fields/> returns the FULL record: ID, dates,
+ * ProcedureCode, Status, TotalCharges/TotalBalance/InsuranceBalance/
+ * PatientBalance, and the PrimaryInsurance* adjudication columns (payment,
+ * contract adjustment + reason, secondary adjustment + reason, adjudication
+ * date). Same quirk as GetPatients. Never reintroduce column toggles here.
  */
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
 
-// ─── WSDL Sequence Tables (source of truth: ?xsd=xsd0) ─────────
-
-/**
- * Columns requested from ChargeFieldsToReturn, in WSDL sequence order.
- * Do not reorder. Do not add names not present in the WSDL type.
- */
-const FIELDS_TO_RETURN: readonly string[] = [
-  'EncounterID',
-  'EncounterStatus',
-  'ID',
-  'InsuranceBalance',
-  'PatientBalance',
-  'PatientID',
-  'PatientName',
-  'PostingDate',
-  'PrimaryInsuranceAdjudicationDate',
-  'PrimaryInsuranceCompanyName',
-  'PrimaryInsuranceInsuranceContractAdjustment',
-  'PrimaryInsuranceInsuranceContractAdjustmentReason',
-  'PrimaryInsuranceInsurancePayment',
-  'PrimaryInsuranceInsuranceSecondaryAdjustment',
-  'PrimaryInsuranceInsuranceSecondaryAdjustmentReason',
-  'PrimaryInsurancePlanName',
-  'ProcedureCode',
-  'ProcedureModifier1',
-  'ProcedureName',
-  'RenderingProviderName',
-  'ServiceStartDate',
-  'Status',
-  'TotalBalance',
-  'TotalCharges',
-];
+// ─── WSDL Sequence Table (source of truth: ?xsd=xsd0) ──────────
 
 /**
  * [MCP arg key, ChargeFilter element] in WSDL sequence order.
@@ -91,22 +69,80 @@ export function buildGetChargesRequestBody(args: Record<string, unknown>): strin
     filterParts.push(`<kar:${element}>${escapeXml(val)}</kar:${element}>`);
   }
 
-  const fieldsXml = FIELDS_TO_RETURN.map(
-    (name) => `<kar:${name}>true</kar:${name}>`
-  ).join('\n        ');
-
   const filterXml =
     filterParts.length > 0
       ? `<kar:Filter>\n        ${filterParts.join('\n        ')}\n      </kar:Filter>`
       : '<kar:Filter />';
 
+  // Fields stays empty: full-record projection (see projection-inversion note).
   return `
     <kar:request>
-      <kar:Fields>
-        ${fieldsXml}
-      </kar:Fields>
+      <kar:Fields/>
       ${filterXml}
     </kar:request>`;
+}
+
+// ─── Response Parser (exported for tests) ───────────────────────
+
+export interface ChargeRecord {
+  chargeId: string;
+  encounterId: string;
+  encounterStatus: string;
+  patientId: string;
+  patientName: string;
+  procedureCode: string;
+  procedureName: string;
+  modifier1: string;
+  serviceDate: string;
+  postingDate: string;
+  status: string;
+  totalCharges: string;
+  totalBalance: string;
+  insuranceBalance: string;
+  patientBalance: string;
+  payer: string;
+  planName: string;
+  adjudicationDate: string;
+  insurancePayment: string;
+  contractAdjustment: string;
+  adjustmentReason: string;
+  secondaryAdjustmentReason: string;
+  renderingProvider: string;
+}
+
+/**
+ * Tebra emits a single empty <ChargeData/> placeholder when a query matches
+ * nothing (and when the projection is broken) — a block with no ID is not a
+ * charge and must be dropped, or callers count phantom rows.
+ */
+export function parseChargeBlocks(xml: string): ChargeRecord[] {
+  return extractAllTags(xml, 'ChargeData')
+    .map((block) => ({
+      chargeId: extractTag(block, 'ID'),
+      encounterId: extractTag(block, 'EncounterID'),
+      encounterStatus: extractTag(block, 'EncounterStatus'),
+      patientId: extractTag(block, 'PatientID'),
+      patientName: extractTag(block, 'PatientName'),
+      procedureCode: extractTag(block, 'ProcedureCode'),
+      procedureName: extractTag(block, 'ProcedureName'),
+      modifier1: extractTag(block, 'ProcedureModifier1'),
+      serviceDate: extractTag(block, 'ServiceStartDate'),
+      postingDate: extractTag(block, 'PostingDate'),
+      status: extractTag(block, 'Status'),
+      totalCharges: extractTag(block, 'TotalCharges'),
+      totalBalance: extractTag(block, 'TotalBalance'),
+      insuranceBalance: extractTag(block, 'InsuranceBalance'),
+      patientBalance: extractTag(block, 'PatientBalance'),
+      payer: extractTag(block, 'PrimaryInsuranceCompanyName'),
+      planName: extractTag(block, 'PrimaryInsurancePlanName'),
+      adjudicationDate: extractTag(block, 'PrimaryInsuranceAdjudicationDate'),
+      insurancePayment: extractTag(block, 'PrimaryInsuranceInsurancePayment'),
+      contractAdjustment: extractTag(block, 'PrimaryInsuranceInsuranceContractAdjustment'),
+      adjustmentReason: extractTag(block, 'PrimaryInsuranceInsuranceContractAdjustmentReason'),
+      secondaryAdjustmentReason: extractTag(block, 'PrimaryInsuranceInsuranceSecondaryAdjustmentReason'),
+      renderingProvider: extractTag(block, 'RenderingProviderName'),
+    }))
+    .filter((charge) => charge.chargeId !== '');
 }
 
 // ─── Tool Definitions ───────────────────────────────────────────
@@ -157,7 +193,10 @@ export const chargeTools = [
         },
         status: {
           type: 'string',
-          description: "Charge status filter (e.g. 'Denied')",
+          description:
+            "Charge status filter. Observed live values: 'Pending', 'Completed', " +
+            "'Error - Rejection', 'Voided', 'Ready'. Note: at least some accounts have " +
+            "NO 'Denied' status — rejected/denied claims surface as 'Error - Rejection'.",
         },
         billedTo: {
           type: 'string',
@@ -211,33 +250,7 @@ export async function handleChargeTool(
 
   const bodyXml = buildGetChargesRequestBody(args);
   const xml = await soapRequest(config, 'GetCharges', bodyXml);
-  const blocks = extractAllTags(xml, 'ChargeData');
-
-  const charges = blocks.map((block) => ({
-    chargeId: extractTag(block, 'ID'),
-    encounterId: extractTag(block, 'EncounterID'),
-    encounterStatus: extractTag(block, 'EncounterStatus'),
-    patientId: extractTag(block, 'PatientID'),
-    patientName: extractTag(block, 'PatientName'),
-    procedureCode: extractTag(block, 'ProcedureCode'),
-    procedureName: extractTag(block, 'ProcedureName'),
-    modifier1: extractTag(block, 'ProcedureModifier1'),
-    serviceDate: extractTag(block, 'ServiceStartDate'),
-    postingDate: extractTag(block, 'PostingDate'),
-    status: extractTag(block, 'Status'),
-    totalCharges: extractTag(block, 'TotalCharges'),
-    totalBalance: extractTag(block, 'TotalBalance'),
-    insuranceBalance: extractTag(block, 'InsuranceBalance'),
-    patientBalance: extractTag(block, 'PatientBalance'),
-    payer: extractTag(block, 'PrimaryInsuranceCompanyName'),
-    planName: extractTag(block, 'PrimaryInsurancePlanName'),
-    adjudicationDate: extractTag(block, 'PrimaryInsuranceAdjudicationDate'),
-    insurancePayment: extractTag(block, 'PrimaryInsuranceInsurancePayment'),
-    contractAdjustment: extractTag(block, 'PrimaryInsuranceInsuranceContractAdjustment'),
-    adjustmentReason: extractTag(block, 'PrimaryInsuranceInsuranceContractAdjustmentReason'),
-    secondaryAdjustmentReason: extractTag(block, 'PrimaryInsuranceInsuranceSecondaryAdjustmentReason'),
-    renderingProvider: extractTag(block, 'RenderingProviderName'),
-  }));
+  const charges = parseChargeBlocks(xml);
 
   if (charges.length === 0) {
     return {
