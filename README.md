@@ -240,7 +240,7 @@ On top of client-side throttling, every SOAP call retries up to 3 times with exp
 4. tebra_get_payments       -- Verify payment posted
 ```
 
-### Patient Onboarding (allure-md.com)
+### Patient Onboarding
 
 ```
 1. tebra_search_patients              -- Check for existing patient
@@ -249,7 +249,7 @@ On top of client-side throttling, every SOAP call retries up to 3 times with exp
 4. tebra_create_appointment           -- Schedule first visit
 ```
 
-### Clinical Context for Note Creation (EPIC Notes)
+### Clinical Context for Note Creation
 
 ```
 1. tebra_get_appointments             -- Get today's schedule
@@ -294,16 +294,6 @@ All FHIR tools
   require: patientId     (from tebra_search_patients)
 ```
 
-## Integration Services
-
-Pre-built integration modules are available in `src/integrations/` for two projects:
-
-- **`epic-notes-integration.ts`** -- Schedule pre-seeding, appointment context for note creation, signed note push-back to Tebra. Copy to your EPIC Notes project at `src/lib/services/tebra-integration.ts`.
-
-- **`fal-integration.ts`** -- Patient sync from allure-md.com registration, Stripe payment posting, Supabase-to-Tebra ID linking. Copy to your FAL project at `src/lib/services/tebra-integration.ts`.
-
-Both modules define an `McpToolCaller` interface and work with any MCP client implementation.
-
 ## API Reference
 
 The server wraps two Tebra APIs:
@@ -332,6 +322,9 @@ npm start      # node dist/index.js — runs the compiled output
 ```
 
 ## Changelog
+
+### 0.3.2 (2026-07-15)
+- **chore**: removed the bundled project-specific integration templates (`src/integrations/epic-notes-integration.ts`, `src/integrations/fal-integration.ts`) and every reference to them (README "Integration Services" section, workflow-example labels, contributor docs). These were copy-paste connector modules for external downstream projects — never imported by the server and not part of its runtime — so they did not belong in the published package. No MCP tools were added or removed; the 45-tool surface is unchanged and the compiled tarball no longer ships `dist/integrations/`.
 
 ### 0.3.1 (2026-07-07)
 - **fix(get_charges)**: `<kar:Fields/>` is now sent EMPTY. 0.3.0's explicit column toggles triggered Tebra's projection-inversion quirk — every call returned a single empty `<ChargeData/>` placeholder (zero real fields, no fault) regardless of filter matches. Empty Fields returns the full record, including the `PrimaryInsurance*` adjudication columns (payment, contract adjustment + reason, secondary adjustment + reason, adjudication date) the explicit toggles were meant to surface.
