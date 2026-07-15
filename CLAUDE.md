@@ -77,14 +77,6 @@ src/tools/
     devices.ts              — tebra_fhir_get_devices (Device)
 ```
 
-### Integration Modules
-
-```
-src/integrations/
-  epic-notes-integration.ts  — EPIC Notes schedule + note workflow service
-  fal-integration.ts         — FAL patient sync + payment posting service
-```
-
 **Adding a new SOAP tool**: Create a file in `src/tools/`, export `<name>Tools` and `handle<Name>Tool(name, args, config)`, then in `src/index.ts` add the import, spread `<name>Tools` into `allTools`, and add a case to the switch statement. **Read the Tebra SOAP wire-format quirks below before constructing any new request body** — three non-obvious requirements must all be satisfied or the call fails server-side.
 
 **Adding a new FHIR tool**: Create a file in `src/tools/fhir/`, import shared helpers from `./helpers.js`, export `fhir<Resource>Tools` and `handleFhir<Resource>Tool(name, args)`, then in `src/index.ts` add the import, spread into the FHIR section of `allTools` (inside the `isFhirConfigured()` block), and add a case to the switch statement.
@@ -117,23 +109,3 @@ Confirmed in writing by Tebra customer care 2026-04-28 (case `!00Do00KPG6.!500Rb
 - **Authorization status is computed locally**: `exhausted` (no remaining visits), `expired` (past end date), `pending` (no auth number), otherwise `active`.
 - **The `TebraConfig` type is threaded** through every handler — no global state.
 - **Encounter workflow**: Draft -> Review -> Approved (triggers billing) or Rejected (returns to Draft). The `update_encounter_status` tool enforces valid transitions.
-- **Integration services use an `McpToolCaller` interface** rather than importing the MCP SDK directly. This decouples them from transport implementation and makes them testable with mocks.
-
-## Integration Points
-
-### EPIC Notes (medical note-taking app)
-
-The `epic-notes-integration.ts` module provides:
-- `getTodaySchedule()` — pre-seeds the schedule view with today's Tebra appointments
-- `getAppointmentContext()` — fetches patient + auth + clinical data in parallel for note creation
-- `pushSignedNoteToTebra()` — creates encounter, uploads PDF, advances to Review status
-- `uploadNoteToPaChart()` — uploads signed note PDF to patient chart
-
-### FAL (allure-md.com)
-
-The `fal-integration.ts` module provides:
-- `syncNewPatientToTebra()` — deduplicates and creates patients, links Supabase IDs
-- `postPaymentToTebra()` — posts Stripe payments to Tebra patient accounts
-- `linkExternalId()` — links Supabase client UUIDs to Tebra patient IDs
-
-Both integration modules define tool name constants at the top of the file, so tool name changes only require one update per module.
