@@ -5,6 +5,10 @@
 
 MCP server for [Tebra](https://www.tebra.com/) (formerly Kareo) practice management. Connects your existing Tebra account to Claude and other MCP-compatible AI agents, exposing **33 SOAP tools** and **12 FHIR clinical tools** for patients, encounters, appointments, billing, documents, insurance, and clinical data. No data is accessible without valid Tebra API credentials.
 
+### Hosted version available
+
+Do not want to manage credentials, hosting, and updates yourself? [DOCK](https://dockhq.vercel.app) is the managed version of this server: encrypted per-practice auth, audit logs, draft-first write actions, and a workflow library. Founding practices lock lifetime pricing: Front Desk $49/mo (Zenoti), Billing Desk $99/mo (Tebra, BAA included), Full Practice $129/mo (both). https://dockhq.vercel.app
+
 ## Quick Start
 
 ```bash
