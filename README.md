@@ -360,7 +360,14 @@ The regression suite pins the three Tebra wire-format invariants (SOAPAction con
 
 ### 0.4.2 (2026-08-04)
 
-First production **write**-smoke run (via the EPIC-Notes harness) faulted CreatePatient with "Expecting element 'Practice'" — prompting a `minOccurs` audit of every write type. Several members are required, not optional:
+**The write path is now production-verified**: iterating a live write-smoke harness against a real practice confirmed CreatePatient, CreateAppointment, CreateDocument, and the external-ID batch + vendor-scoped lookup end-to-end (encounter write ops remain opt-in to verify). The runs surfaced four additional wire facts, all fixed here:
+
+- **Required members** (`minOccurs` audit after CreatePatient faulted "Expecting element 'Practice'"): PatientCreate/PatientUpdate require `Practice`; AppointmentCreate requires `PracticeId`; AppointmentUpdate requires `PatientId`+`ServiceLocationId`; DocumentCreateRequest requires `PracticeId`.
+- **External IDs are vendor-scoped, unique per vendor, and silently truncated at 25 characters** — writes with longer IDs now fail closed (truncation breaks every later lookup).
+- **`DocumentDate` is a true `xs:dateTime`** — date-only input is normalized to ISO midnight; US-format strings fault the deserializer (Filter date members, being `xs:string`, still accept either).
+- The `UpdatePatientsExternalID` response returns an empty `ItemsUpdated` echo even on success — verify via the vendor-scoped `ExternalID` lookup on `tebra_get_patient` instead.
+
+Details:
 
 - **fix(create/update_patient)**: `Practice` is a required member of PatientCreate AND PatientUpdate — now always emitted; when practiceName/practiceId are omitted, the account's first practice is auto-resolved via GetPractices (cached). `tebra_update_patient` gains optional practiceName/practiceId args.
 - **fix(create_appointment)**: `PracticeId` is required — auto-resolved when omitted.
