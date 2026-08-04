@@ -15,7 +15,9 @@ import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-clie
 // ─── Request Body Builder (exported for tests) ──────────────────
 
 export function buildGetAllPatientsBody(args: Record<string, unknown>): string {
-  const batchSize = args.batchSize != null ? Number(args.batchSize) : 200;
+  const requested = args.batchSize != null ? Number(args.batchSize) : 200;
+  // Clamp to the documented 1–1000 range instead of trusting the input.
+  const batchSize = Number.isFinite(requested) ? Math.min(Math.max(Math.trunc(requested), 1), 1000) : 200;
   const startKey = args.startKey ? String(args.startKey) : '';
   const practiceId = args.practiceId ? String(args.practiceId) : '';
 
