@@ -17,6 +17,7 @@
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag } from '../soap-client.js';
+import { resolveDefaultPracticeId } from './practices.js';
 
 const APPOINTMENT_STATUSES = [
   'Unknown', 'Scheduled', 'ReminderSent', 'Confirmed', 'CheckedIn', 'Roomed',
@@ -59,6 +60,12 @@ export function buildCreateAppointmentBody(args: Record<string, unknown>): strin
   const appointmentName = args.appointmentName ? String(args.appointmentName) : '';
   const authorizationId = args.insurancePolicyAuthorizationId ? String(args.insurancePolicyAuthorizationId) : '';
 
+  // PracticeId is a REQUIRED AppointmentCreate member (minOccurs=1). The
+  // handler auto-resolves it before calling this builder.
+  if (!practiceId) {
+    throw new Error('tebra_create_appointment: practiceId is required (the WSDL PracticeId member is mandatory).');
+  }
+
   // AppointmentCreate WSDL sequence order (members we emit).
   return `
         <kar:request>
@@ -75,9 +82,9 @@ export function buildCreateAppointmentBody(args: Record<string, unknown>): strin
             ${notes ? `<kar:Notes>${escapeXml(notes)}</kar:Notes>` : ''}
             <kar:PatientSummary>
               <kar:PatientId>${escapeXml(patientId)}</kar:PatientId>
-              ${practiceId ? `<kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>` : ''}
+              <kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>
             </kar:PatientSummary>
-            ${practiceId ? `<kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>` : ''}
+            <kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>
             <kar:ProviderId>${escapeXml(providerId)}</kar:ProviderId>
             <kar:ServiceLocationId>${escapeXml(serviceLocationId)}</kar:ServiceLocationId>
             <kar:StartTime>${escapeXml(startDate)}</kar:StartTime>
@@ -89,6 +96,7 @@ export function buildUpdateAppointmentBody(args: Record<string, unknown>): strin
   const appointmentId = String(args.appointmentId ?? '');
   const startDate = args.startDate ? String(args.startDate) : '';
   const providerId = args.providerId ? String(args.providerId) : '';
+  const patientId = args.patientId ? String(args.patientId) : '';
   const serviceLocationId = args.serviceLocationId ? String(args.serviceLocationId) : '';
   const appointmentReasonId = args.appointmentReasonId ? String(args.appointmentReasonId) : '';
   const notes = args.notes ? String(args.notes) : '';
@@ -97,6 +105,13 @@ export function buildUpdateAppointmentBody(args: Record<string, unknown>): strin
   const appointmentStatus = args.appointmentStatus
     ? String(args.appointmentStatus)
     : args.confirmationStatus ? String(args.confirmationStatus) : '';
+
+  // AppointmentUpdate marks AppointmentId, PatientId, and ServiceLocationId
+  // as REQUIRED (minOccurs=1). The handler hydrates missing ones from
+  // GetAppointment before calling this builder.
+  if (!patientId || !serviceLocationId) {
+    throw new Error('tebra_update_appointment: patientId and serviceLocationId are required by the WSDL (auto-hydrated by the handler from GetAppointment).');
+  }
 
   let endTime = '';
   if (startDate) {
@@ -115,8 +130,9 @@ export function buildUpdateAppointmentBody(args: Record<string, unknown>): strin
             ${appointmentStatus ? `<kar:AppointmentStatus>${escapeXml(appointmentStatus)}</kar:AppointmentStatus>` : ''}
             ${endTime ? `<kar:EndTime>${escapeXml(endTime)}</kar:EndTime>` : ''}
             ${notes ? `<kar:Notes>${escapeXml(notes)}</kar:Notes>` : ''}
+            <kar:PatientId>${escapeXml(patientId)}</kar:PatientId>
             ${providerId ? `<kar:ProviderId>${escapeXml(providerId)}</kar:ProviderId>` : ''}
-            ${serviceLocationId ? `<kar:ServiceLocationId>${escapeXml(serviceLocationId)}</kar:ServiceLocationId>` : ''}
+            <kar:ServiceLocationId>${escapeXml(serviceLocationId)}</kar:ServiceLocationId>
             ${startDate ? `<kar:StartTime>${escapeXml(startDate)}</kar:StartTime>` : ''}
           </kar:Appointment>
         </kar:request>`;
@@ -162,7 +178,7 @@ export const appointmentCrudTools = [
         },
         practiceId: {
           type: 'string',
-          description: 'Optional practice ID (recommended for multi-practice accounts)',
+          description: "Practice ID (required by Tebra; auto-resolved to the account's first practice if omitted)",
         },
         appointmentMode: {
           type: 'string',
@@ -217,9 +233,13 @@ export const appointmentCrudTools = [
           type: 'string',
           description: 'Optional new provider ID',
         },
+        patientId: {
+          type: 'string',
+          description: 'Patient ID (required by Tebra; auto-hydrated from the existing appointment if omitted)',
+        },
         serviceLocationId: {
           type: 'string',
-          description: 'Optional new service location ID',
+          description: 'Service location ID (required by Tebra; auto-hydrated from the existing appointment if omitted)',
         },
         appointmentReasonId: {
           type: 'string',
@@ -299,7 +319,12 @@ export async function handleAppointmentCrudTool(
         throw new Error(`Missing required fields: ${missing.join(', ')}. Also provide endDate or duration.`);
       }
 
-      const bodyXml = buildCreateAppointmentBody(args);
+      // PracticeId is a required AppointmentCreate member — resolve when omitted.
+      const effectiveArgs = args.practiceId
+        ? args
+        : { ...args, practiceId: await resolveDefaultPracticeId(config) };
+
+      const bodyXml = buildCreateAppointmentBody(effectiveArgs);
       const xml = await soapRequest(config, 'CreateAppointment', bodyXml);
       const appointmentId = extractTag(xml, 'AppointmentId') || extractTag(xml, 'AppointmentID');
 
@@ -320,7 +345,26 @@ export async function handleAppointmentCrudTool(
         throw new Error('appointmentId is required.');
       }
 
-      const bodyXml = buildUpdateAppointmentBody(args);
+      // PatientId and ServiceLocationId are required AppointmentUpdate
+      // members — hydrate missing ones from the current appointment.
+      let effectiveArgs = args;
+      if (!args.patientId || !args.serviceLocationId) {
+        const detailBody = `
+        <kar:request>
+          <kar:Appointment>
+            <kar:AppointmentId>${escapeXml(appointmentId)}</kar:AppointmentId>
+          </kar:Appointment>
+        </kar:request>`;
+        const detailXml = await soapRequest(config, 'GetAppointment', detailBody);
+        const summary = extractTag(detailXml, 'PatientSummary');
+        effectiveArgs = {
+          ...args,
+          patientId: args.patientId ?? (summary ? extractTag(summary, 'PatientId') : ''),
+          serviceLocationId: args.serviceLocationId ?? extractTag(detailXml, 'ServiceLocationId'),
+        };
+      }
+
+      const bodyXml = buildUpdateAppointmentBody(effectiveArgs);
       const xml = await soapRequest(config, 'UpdateAppointment', bodyXml);
       const updatedId = extractTag(xml, 'AppointmentId') || appointmentId;
 

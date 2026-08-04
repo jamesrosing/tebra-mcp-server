@@ -358,6 +358,16 @@ The regression suite pins the three Tebra wire-format invariants (SOAPAction con
 
 ## Changelog
 
+### 0.4.2 (2026-08-04)
+
+First production **write**-smoke run (via the EPIC-Notes harness) faulted CreatePatient with "Expecting element 'Practice'" — prompting a `minOccurs` audit of every write type. Several members are required, not optional:
+
+- **fix(create/update_patient)**: `Practice` is a required member of PatientCreate AND PatientUpdate — now always emitted; when practiceName/practiceId are omitted, the account's first practice is auto-resolved via GetPractices (cached). `tebra_update_patient` gains optional practiceName/practiceId args.
+- **fix(create_appointment)**: `PracticeId` is required — auto-resolved when omitted.
+- **fix(update_appointment)**: `PatientId` and `ServiceLocationId` are required — auto-hydrated from GetAppointment when omitted, so a status-only or reschedule-only update still works.
+- **fix(create_document)**: `PracticeId` is required — auto-resolved when omitted.
+- Builders fail closed with clear messages if the required members are still missing; 3 new regression tests (39 total).
+
 ### 0.4.1 (2026-08-04)
 
 Live production verification of the 0.4.0 shapes — a full read-only smoke pass (24 checks: every SOAP read tool plus the FHIR pipeline) now passes against a real Tebra practice. Fixes found only by going live:

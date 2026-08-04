@@ -13,6 +13,16 @@
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag } from '../soap-client.js';
+import { resolveDefaultPracticeId } from './practices.js';
+
+/** Fill in the required practice identifier when the caller omitted it. */
+async function withPractice(
+  args: Record<string, unknown>,
+  config: TebraConfig
+): Promise<Record<string, unknown>> {
+  if (args.practiceId || args.practiceName) return args;
+  return { ...args, practiceId: await resolveDefaultPracticeId(config) };
+}
 
 interface InsuranceInput {
   companyName: string;
@@ -77,14 +87,18 @@ export function buildCreatePatientBody(args: Record<string, unknown>): string {
             </kar:Guarantor>`;
   }
 
+  // Practice is a REQUIRED PatientCreate member (minOccurs=1; omitting it
+  // faults with "Expecting element 'Practice'" — verified live 2026-08-04).
+  // The handler auto-resolves practiceId before calling this builder.
   const practiceId = str('practiceId');
   const practiceName = str('practiceName');
-  const practiceXml = practiceId || practiceName
-    ? `<kar:Practice>
+  if (!practiceId && !practiceName) {
+    throw new Error('tebra_create_patient: practiceId or practiceName is required (the WSDL Practice member is mandatory).');
+  }
+  const practiceXml = `<kar:Practice>
               ${practiceId ? `<kar:PracticeID>${escapeXml(practiceId)}</kar:PracticeID>` : ''}
               ${practiceName ? `<kar:PracticeName>${escapeXml(practiceName)}</kar:PracticeName>` : ''}
-            </kar:Practice>`
-    : '';
+            </kar:Practice>`;
 
   // PatientCreate WSDL sequence order (members we emit).
   return `
@@ -116,6 +130,14 @@ export function buildCreatePatientBody(args: Record<string, unknown>): string {
 export function buildUpdatePatientBody(args: Record<string, unknown>): string {
   const str = (key: string): string => (args[key] ? String(args[key]) : '');
 
+  // Practice is a REQUIRED PatientUpdate member — same as PatientCreate.
+  // The handler auto-resolves practiceId before calling this builder.
+  const practiceId = str('practiceId');
+  const practiceName = str('practiceName');
+  if (!practiceId && !practiceName) {
+    throw new Error('tebra_update_patient: practiceId or practiceName is required (the WSDL Practice member is mandatory).');
+  }
+
   // PatientUpdate WSDL sequence order (members we emit). PatientID sits
   // between PatientExternalID and Practice in the sequence.
   return `
@@ -132,6 +154,10 @@ export function buildUpdatePatientBody(args: Record<string, unknown>): string {
             ${str('lastName') ? `<kar:LastName>${escapeXml(str('lastName'))}</kar:LastName>` : ''}
             ${str('mobilePhone') ? `<kar:MobilePhone>${escapeXml(str('mobilePhone'))}</kar:MobilePhone>` : ''}
             <kar:PatientID>${escapeXml(str('patientId'))}</kar:PatientID>
+            <kar:Practice>
+              ${practiceId ? `<kar:PracticeID>${escapeXml(practiceId)}</kar:PracticeID>` : ''}
+              ${practiceName ? `<kar:PracticeName>${escapeXml(practiceName)}</kar:PracticeName>` : ''}
+            </kar:Practice>
             ${str('state') ? `<kar:State>${escapeXml(str('state'))}</kar:State>` : ''}
             ${str('zipCode') ? `<kar:ZipCode>${escapeXml(str('zipCode'))}</kar:ZipCode>` : ''}
           </kar:Patient>
@@ -144,7 +170,7 @@ export const patientCrudTools = [
   {
     name: 'tebra_create_patient',
     description:
-      'Create a new patient in Tebra with demographics, address, insurance, and guarantor information. practiceName or practiceId is strongly recommended — Tebra requires the practice on most accounts.',
+      "Create a new patient in Tebra with demographics, address, insurance, and guarantor information. The practice is required by Tebra; if practiceName/practiceId are omitted, the account's first practice is used automatically.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -162,7 +188,7 @@ export const patientCrudTools = [
         },
         practiceName: {
           type: 'string',
-          description: 'Practice name (strongly recommended; required by Tebra on most accounts)',
+          description: "Practice name (auto-resolved to the account's first practice if omitted)",
         },
         practiceId: {
           type: 'string',
@@ -253,13 +279,21 @@ export const patientCrudTools = [
   {
     name: 'tebra_update_patient',
     description:
-      'Update an existing patient in Tebra. Only provided fields will be changed.',
+      "Update an existing patient in Tebra. Only provided fields will be changed. The practice is required by Tebra; if practiceName/practiceId are omitted, the account's first practice is used automatically.",
     inputSchema: {
       type: 'object' as const,
       properties: {
         patientId: {
           type: 'string',
           description: 'Tebra patient ID to update',
+        },
+        practiceName: {
+          type: 'string',
+          description: "Practice name (auto-resolved to the account's first practice if omitted)",
+        },
+        practiceId: {
+          type: 'string',
+          description: 'Practice ID (alternative to practiceName)',
         },
         firstName: {
           type: 'string',
@@ -333,7 +367,7 @@ export async function handlePatientCrudTool(
         throw new Error('firstName, lastName, and dateOfBirth are required.');
       }
 
-      const bodyXml = buildCreatePatientBody(args);
+      const bodyXml = buildCreatePatientBody(await withPractice(args, config));
       const xml = await soapRequest(config, 'CreatePatient', bodyXml);
       const patientId = extractTag(xml, 'PatientID');
 
@@ -354,7 +388,7 @@ export async function handlePatientCrudTool(
         throw new Error('patientId is required.');
       }
 
-      const bodyXml = buildUpdatePatientBody(args);
+      const bodyXml = buildUpdatePatientBody(await withPractice(args, config));
       const xml = await soapRequest(config, 'UpdatePatient', bodyXml);
       const updatedId = extractTag(xml, 'PatientID') || patientId;
 

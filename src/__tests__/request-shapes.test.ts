@@ -215,32 +215,50 @@ test('update_encounter_status: EncounterUpdateStatus wrapper with EncounterStatu
 
 // ─── Appointment CRUD ───────────────────────────────────────────
 
-test('create_appointment: flat AppointmentCreate shape with PatientSummary and StartTime/EndTime', () => {
+test('create_appointment: flat AppointmentCreate shape with required PracticeId', () => {
   const body = buildCreateAppointmentBody({
-    patientId: '4127', providerId: '11', serviceLocationId: '3',
+    patientId: '4127', providerId: '11', serviceLocationId: '3', practiceId: '1',
     startDate: '2026-08-05T09:00:00', duration: 30, appointmentReasonId: '2',
   });
   assert.match(body, /<kar:PatientSummary>[\s\S]*<kar:PatientId>4127<\/kar:PatientId>[\s\S]*<\/kar:PatientSummary>/);
   assert.match(body, /<kar:StartTime>2026-08-05T09:00:00<\/kar:StartTime>/);
   assert.match(body, /<kar:EndTime>2026-08-05T09:30:00<\/kar:EndTime>/);
-  assertOrder(body, ['AppointmentReasonId', 'AppointmentStatus', 'AppointmentType', 'EndTime', 'PatientSummary', 'ProviderId', 'ServiceLocationId', 'StartTime'], 'AppointmentCreate');
+  // Strip PatientSummary internals so the order check sees top-level members.
+  const topLevel = body.replace(/<kar:PatientSummary>[\s\S]*?<\/kar:PatientSummary>/, '<kar:PatientSummary />');
+  assertOrder(topLevel, ['AppointmentReasonId', 'AppointmentStatus', 'AppointmentType', 'EndTime', 'PracticeId', 'ProviderId', 'ServiceLocationId', 'StartTime'], 'AppointmentCreate');
   // Old (broken) nested-identifier shape must be gone.
   assert.doesNotMatch(body, /<kar:Patient>/);
   assert.doesNotMatch(body, /<kar:Provider>/);
   assert.doesNotMatch(body, /<kar:Duration>/);
 });
 
+test('create_appointment: practiceId is mandatory (auto-resolved by the handler)', () => {
+  assert.throws(
+    () => buildCreateAppointmentBody({ patientId: '1', providerId: '2', serviceLocationId: '3', startDate: '2026-08-05T09:00:00', duration: 30 }),
+    /practiceId is required/
+  );
+});
+
 test('create_appointment: requires endDate or duration', () => {
   assert.throws(
-    () => buildCreateAppointmentBody({ patientId: '1', providerId: '2', serviceLocationId: '3', startDate: '2026-08-05T09:00:00' }),
+    () => buildCreateAppointmentBody({ patientId: '1', providerId: '2', serviceLocationId: '3', practiceId: '1', startDate: '2026-08-05T09:00:00' }),
     /endDate or duration/
   );
 });
 
-test('update_appointment: AppointmentId first, confirmationStatus aliases to AppointmentStatus', () => {
-  const body = buildUpdateAppointmentBody({ appointmentId: '99', confirmationStatus: 'CheckedIn' });
+test('update_appointment: required PatientId/ServiceLocationId emitted in WSDL order', () => {
+  const body = buildUpdateAppointmentBody({
+    appointmentId: '99', confirmationStatus: 'CheckedIn',
+    patientId: '4127', serviceLocationId: '3',
+  });
   assert.match(body, /<kar:AppointmentId>99<\/kar:AppointmentId>/);
   assert.match(body, /<kar:AppointmentStatus>CheckedIn<\/kar:AppointmentStatus>/);
+  assertOrder(body, ['AppointmentId', 'AppointmentStatus', 'PatientId', 'ServiceLocationId'], 'AppointmentUpdate');
+  // Both are WSDL-required; the handler hydrates them from GetAppointment.
+  assert.throws(
+    () => buildUpdateAppointmentBody({ appointmentId: '99', confirmationStatus: 'CheckedIn' }),
+    /patientId and serviceLocationId are required/
+  );
 });
 
 // ─── Patient CRUD ───────────────────────────────────────────────
@@ -262,22 +280,32 @@ test('create_patient: members in WSDL sequence order with correct names', () => 
   assert.match(body, /<kar:RelationshiptoGuarantor>Spouse<\/kar:RelationshiptoGuarantor>/);
 });
 
-test('update_patient: PatientID positioned after contact fields per WSDL order', () => {
-  const body = buildUpdatePatientBody({ patientId: '4127', firstName: 'Jane', mobilePhone: '9495551212', zipCode: '92660' });
-  assertOrder(body, ['FirstName', 'MobilePhone', 'PatientID', 'ZipCode'], 'PatientUpdate');
+test('update_patient: PatientID then required Practice per WSDL order', () => {
+  const body = buildUpdatePatientBody({ patientId: '4127', firstName: 'Jane', mobilePhone: '9495551212', zipCode: '92660', practiceId: '1' });
+  assertOrder(body, ['FirstName', 'MobilePhone', 'PatientID', 'Practice', 'ZipCode'], 'PatientUpdate');
+  // Practice is a required PatientUpdate member (handler auto-resolves it).
+  assert.throws(
+    () => buildUpdatePatientBody({ patientId: '4127', firstName: 'Jane' }),
+    /practiceId or practiceName is required/
+  );
 });
 
 // ─── Documents ──────────────────────────────────────────────────
 
-test('create_document: DocumentToCreate wrapper in WSDL member order', () => {
+test('create_document: DocumentToCreate wrapper with required PracticeId in WSDL order', () => {
   const body = buildCreateDocumentBody({
-    patientId: '4127', documentLabel: 'Operative Report', fileName: 'op.pdf', fileContent: 'QUJD',
+    patientId: '4127', documentLabel: 'Operative Report', fileName: 'op.pdf', fileContent: 'QUJD', practiceId: '1',
   });
   assert.match(body, /<kar:DocumentToCreate>/);
   assert.doesNotMatch(body, /<kar:Document>/);
   // Label normalized to the enum's no-spaces form.
   assert.match(body, /<kar:Label>OperativeReport<\/kar:Label>/);
-  assertOrder(body, ['FileContent', 'FileName', 'Label', 'Name', 'PatientId', 'Status'], 'DocumentCreateRequest');
+  assertOrder(body, ['FileContent', 'FileName', 'Label', 'Name', 'PatientId', 'PracticeId', 'Status'], 'DocumentCreateRequest');
+  // PracticeId is a required member (handler auto-resolves it).
+  assert.throws(
+    () => buildCreateDocumentBody({ patientId: '4127', documentLabel: 'Other', fileName: 'op.pdf', fileContent: 'QUJD' }),
+    /practiceId is required/
+  );
 });
 
 // ─── External IDs ───────────────────────────────────────────────

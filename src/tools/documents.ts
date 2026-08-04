@@ -10,6 +10,7 @@
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag } from '../soap-client.js';
+import { resolveDefaultPracticeId } from './practices.js';
 
 // The most commonly used values from the WSDL DocumentLabel enum. Any exact
 // enum value is accepted; this list feeds the schema description.
@@ -36,6 +37,12 @@ export function buildCreateDocumentBody(args: Record<string, unknown>): string {
   const documentDate = args.encounterDate ? String(args.encounterDate) : '';
   const practiceId = args.practiceId ? String(args.practiceId) : '';
 
+  // PracticeId is a REQUIRED DocumentCreateRequest member (minOccurs=1).
+  // The handler auto-resolves it before calling this builder.
+  if (!practiceId) {
+    throw new Error('tebra_create_document: practiceId is required (the WSDL PracticeId member is mandatory).');
+  }
+
   return `
         <kar:request>
           <kar:DocumentToCreate>
@@ -46,7 +53,7 @@ export function buildCreateDocumentBody(args: Record<string, unknown>): string {
             <kar:Label>${escapeXml(documentLabel)}</kar:Label>
             <kar:Name>${escapeXml(documentName)}</kar:Name>
             <kar:PatientId>${escapeXml(patientId)}</kar:PatientId>
-            ${practiceId ? `<kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>` : ''}
+            <kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>
             <kar:Status>New</kar:Status>
           </kar:DocumentToCreate>
         </kar:request>`;
@@ -92,7 +99,7 @@ export const documentTools = [
         },
         practiceId: {
           type: 'string',
-          description: 'Optional practice ID (recommended for multi-practice accounts)',
+          description: "Practice ID (required by Tebra; auto-resolved to the account's first practice if omitted)",
         },
       },
       required: ['patientId', 'documentLabel', 'fileName', 'fileContent'],
@@ -133,7 +140,12 @@ export async function handleDocumentTool(
         throw new Error('patientId, documentLabel, fileName, and fileContent are all required.');
       }
 
-      const bodyXml = buildCreateDocumentBody(args);
+      // PracticeId is a required DocumentCreateRequest member — resolve when omitted.
+      const effectiveArgs = args.practiceId
+        ? args
+        : { ...args, practiceId: await resolveDefaultPracticeId(config) };
+
+      const bodyXml = buildCreateDocumentBody(effectiveArgs);
       const xml = await soapRequest(config, 'CreateDocument', bodyXml);
       const documentId = extractTag(xml, 'DocumentId') || extractTag(xml, 'DocumentID');
 
