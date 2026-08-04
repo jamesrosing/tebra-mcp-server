@@ -1,15 +1,15 @@
 /**
  * Tebra MCP tools: Patient authorization retrieval.
+ *
+ * Uses GetPatient (Filter-only request shape — see patients.ts) and walks
+ * the WSDL nesting: Patient → Cases (PatientCaseData) → InsurancePolicies
+ * (PatientInsurancePolicyData) → Authorizations
+ * (PatientInsurancePolicyAuthorizationData).
  */
 
 import type { TebraConfig } from '../config.js';
-import {
-  soapRequest,
-  escapeXml,
-  extractTag,
-  extractAllTags,
-  extractNumber,
-} from '../soap-client.js';
+import { soapRequest, extractTag, extractAllTags } from '../soap-client.js';
+import { buildGetPatientBody, parseAuthorizationBlock } from './patients.js';
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -17,7 +17,7 @@ export const authorizationTools = [
   {
     name: 'tebra_get_patient_authorizations',
     description:
-      'Get all authorizations for a Tebra patient across all cases. Returns auth number, approved/used/remaining visits, expiry dates, and covered CPT codes.',
+      'Get all insurance authorizations for a Tebra patient across all cases and policies. Returns auth number, approved/used/remaining visits, start/end dates, computed status (active/exhausted/expired/pending), payer contact info, and an expiring-soon warning.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -44,72 +44,46 @@ export async function handleAuthorizationTool(
 
   const patientId = String(args.patientId ?? '');
   if (!patientId) {
-    return { content: [{ type: 'text', text: 'patientId is required.' }] };
+    throw new Error('patientId is required.');
   }
 
-  const bodyXml = `
-    <kar:request>
-      <kar:Fields>
-        <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
-      </kar:Fields>
-    </kar:request>`;
-
+  const bodyXml = buildGetPatientBody({ patientId });
   const xml = await soapRequest(config, 'GetPatient', bodyXml);
   const patientBlock = extractTag(xml, 'Patient');
 
-  if (!patientBlock) {
+  if (!patientBlock || !extractTag(patientBlock, 'ID')) {
     return { content: [{ type: 'text', text: `Patient not found: ${patientId}` }] };
   }
 
-  const caseBlocks = extractAllTags(patientBlock, 'CaseData');
-  const authorizations: AuthorizationResult[] = [];
+  const authorizations: Array<Record<string, unknown>> = [];
 
-  for (const caseBlock of caseBlocks) {
-    const caseName = extractTag(caseBlock, 'CaseName') || extractTag(caseBlock, 'Name');
-    const authBlocks = extractAllTags(caseBlock, 'AuthorizationData');
+  for (const caseBlock of extractAllTags(patientBlock, 'PatientCaseData')) {
+    const caseName = extractTag(caseBlock, 'Name');
+    for (const policyBlock of extractAllTags(caseBlock, 'PatientInsurancePolicyData')) {
+      const planName = extractTag(policyBlock, 'PlanName');
+      const companyName = extractTag(policyBlock, 'CompanyName');
+      for (const authBlock of extractAllTags(policyBlock, 'PatientInsurancePolicyAuthorizationData')) {
+        const auth = parseAuthorizationBlock(authBlock);
 
-    for (const authBlock of authBlocks) {
-      const approved = extractNumber(authBlock, 'ApprovedVisits');
-      const used = extractNumber(authBlock, 'UsedVisits');
-      const remaining = Math.max(0, approved - used);
-      const endDate = extractTag(authBlock, 'EndDate');
-      const authNumber = extractTag(authBlock, 'AuthorizationNumber');
-
-      let status = 'active';
-      if (remaining <= 0) status = 'exhausted';
-      else if (endDate && new Date(endDate) < new Date()) status = 'expired';
-      else if (!authNumber) status = 'pending';
-
-      // Check if expiring within 30 days
-      let expiringWarning: string | undefined;
-      if (status === 'active' && endDate) {
-        const daysUntilExpiry = Math.ceil(
-          (new Date(endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-        );
-        if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
-          expiringWarning = `Authorization expires in ${daysUntilExpiry} days`;
+        // Flag authorizations expiring within 30 days.
+        let expiringWarning: string | undefined;
+        if (auth.status === 'active' && auth.endDate) {
+          const daysUntilExpiry = Math.ceil(
+            (new Date(auth.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
+          );
+          if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
+            expiringWarning = `Authorization expires in ${daysUntilExpiry} days`;
+          }
         }
+
+        authorizations.push({
+          caseName,
+          insuranceCompany: companyName,
+          insurancePlan: planName,
+          ...auth,
+          ...(expiringWarning ? { expiringWarning } : {}),
+        });
       }
-
-      const cptCodesRaw = extractTag(authBlock, 'CPTCodes') || extractTag(authBlock, 'ProcedureCodes');
-      const diagCodesRaw = extractTag(authBlock, 'DiagnosisCodes');
-
-      authorizations.push({
-        caseName,
-        authorizationId: extractTag(authBlock, 'AuthorizationID') || extractTag(authBlock, 'ID'),
-        authNumber,
-        insurancePlan: extractTag(authBlock, 'InsurancePlanName'),
-        status,
-        approvedVisits: approved,
-        usedVisits: used,
-        remainingVisits: remaining,
-        startDate: extractTag(authBlock, 'StartDate'),
-        endDate,
-        approvedCptCodes: cptCodesRaw ? cptCodesRaw.split(',').map((c) => c.trim()).filter(Boolean) : [],
-        diagnosisCodes: diagCodesRaw ? diagCodesRaw.split(',').map((c) => c.trim()).filter(Boolean) : [],
-        notes: extractTag(authBlock, 'Notes'),
-        expiringWarning,
-      });
     }
   }
 
@@ -122,23 +96,4 @@ export async function handleAuthorizationTool(
   return {
     content: [{ type: 'text', text: JSON.stringify(authorizations, null, 2) }],
   };
-}
-
-// ─── Types ──────────────────────────────────────────────────────
-
-interface AuthorizationResult {
-  caseName: string;
-  authorizationId: string;
-  authNumber: string;
-  insurancePlan: string;
-  status: string;
-  approvedVisits: number;
-  usedVisits: number;
-  remainingVisits: number;
-  startDate: string;
-  endDate: string;
-  approvedCptCodes: string[];
-  diagnosisCodes: string[];
-  notes: string;
-  expiringWarning?: string;
 }

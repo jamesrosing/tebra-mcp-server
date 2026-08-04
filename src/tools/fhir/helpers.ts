@@ -7,7 +7,7 @@
  * and lab-results).
  */
 
-import { fhirRequest, getFhirConfig } from '../../fhir-client.js';
+import { fhirRequest, fhirRequestUrl, getFhirConfig } from '../../fhir-client.js';
 
 export interface FhirResource {
   resourceType: string;
@@ -56,16 +56,44 @@ export function refDisplay(ref: unknown): string {
 }
 
 export function addDateRange(
-  params: Record<string, string>,
+  params: Record<string, string | string[]>,
   args: Record<string, unknown>,
+  paramName = 'date',
 ): void {
-  if (args.fromDate) params.date = `ge${String(args.fromDate)}`;
-  if (args.toDate) {
-    if (params.date) {
-      params.date = `${params.date}&date=le${String(args.toDate)}`;
-    } else {
-      params.date = `le${String(args.toDate)}`;
-    }
+  // A from+to range needs TWO date params (date=ge...&date=le...). These are
+  // passed as an array so the client emits repeated query params — string
+  // concatenation here would get percent-encoded into one malformed value.
+  const range: string[] = [];
+  if (args.fromDate) range.push(`ge${String(args.fromDate)}`);
+  if (args.toDate) range.push(`le${String(args.toDate)}`);
+  if (range.length === 1) params[paramName] = range[0];
+  if (range.length > 1) params[paramName] = range;
+}
+
+const MAX_BUNDLE_PAGES = 10;
+
+/**
+ * Run a FHIR search and collect resources across all Bundle pages
+ * (following link[relation=next], capped at MAX_BUNDLE_PAGES).
+ */
+export async function searchFhir(
+  resource: string,
+  params: Record<string, string | string[]>,
+): Promise<{ resources: FhirResource[]; truncated: boolean }> {
+  const config = getFhirConfig();
+  const resources: FhirResource[] = [];
+  let bundle = await fhirRequest(config, resource, params) as FhirBundle;
+  let pages = 1;
+
+  for (;;) {
+    resources.push(...extractBundleResources(bundle));
+    const next = Array.isArray(bundle?.link)
+      ? (bundle.link as Array<{ relation?: string; url?: string }>).find((l) => l.relation === 'next')?.url
+      : undefined;
+    if (!next) return { resources, truncated: false };
+    if (pages >= MAX_BUNDLE_PAGES) return { resources, truncated: true };
+    bundle = await fhirRequestUrl(config, next) as FhirBundle;
+    pages++;
   }
 }
 
@@ -73,6 +101,7 @@ export function formatFhirResult(
   resources: FhirResource[],
   label: string,
   summarizer: (r: FhirResource) => Record<string, unknown>,
+  truncated = false,
 ): { content: Array<{ type: string; text: string }> } {
   if (resources.length === 0) {
     return {
@@ -81,8 +110,14 @@ export function formatFhirResult(
   }
 
   const summarized = resources.map(summarizer);
+  const text = JSON.stringify(summarized, null, 2);
   return {
-    content: [{ type: 'text', text: JSON.stringify(summarized, null, 2) }],
+    content: [{
+      type: 'text',
+      text: truncated
+        ? `${text}\n\nNote: result set truncated after ${resources.length} entries — narrow the date range to see the rest.`
+        : text,
+    }],
   };
 }
 

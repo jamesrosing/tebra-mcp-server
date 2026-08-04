@@ -38,7 +38,7 @@ export async function handleAppointmentDetailTool(
 
   const appointmentId = String(args.appointmentId ?? '');
   if (!appointmentId) {
-    return { content: [{ type: 'text', text: 'appointmentId is required.' }] };
+    throw new Error('appointmentId is required.');
   }
 
   // GetAppointment does NOT take the Fields/Filter shape the list endpoints

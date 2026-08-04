@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   codeDisplay,
   refDisplay,
@@ -49,11 +47,9 @@ export async function handleFhirDeviceTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const data = await fhirRequest(config, 'Device', { patient: patientId });
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'devices', summarize);
+  const { resources, truncated } = await searchFhir('Device', { patient: patientId });
+  return formatFhirResult(resources, 'devices', summarize, truncated);
 }

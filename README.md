@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/tebra-mcp-server.svg)](https://www.npmjs.com/package/tebra-mcp-server)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-MCP server for [Tebra](https://www.tebra.com/) (formerly Kareo) practice management. Connects your existing Tebra account to Claude and other MCP-compatible AI agents, exposing **33 SOAP tools** and **12 FHIR clinical tools** for patients, encounters, appointments, billing, documents, insurance, and clinical data. No data is accessible without valid Tebra API credentials.
+MCP server for [Tebra](https://www.tebra.com/) (formerly Kareo) practice management. Connects your existing Tebra account to Claude and other MCP-compatible AI agents, exposing **34 SOAP tools** and **13 FHIR clinical tools** for patients, encounters, appointments, billing, documents, insurance, and clinical data. Every request body is generated from the live Tebra WSDL contract (member names and sequence order verified against `KareoServices.svc?xsd=xsd0`/`xsd7`), with a regression suite locking the wire format in place. No data is accessible without valid Tebra API credentials.
 
 ### Hosted version available
 
@@ -32,15 +32,17 @@ npx tebra-mcp-server
 | `TEBRA_CUSTOMER_KEY` | Yes | Customer key from Tebra PM admin |
 | `TEBRA_SOAP_ENDPOINT` | No | Override SOAP endpoint (for testing) |
 
-### FHIR API (optional -- enables 12 clinical data tools)
+### FHIR API (optional -- enables 13 clinical data tools)
 
 | Variable | Required | Description |
 |---|---|---|
-| `TEBRA_FHIR_CLIENT_ID` | For FHIR | OAuth2 client ID from Tebra developer portal |
+| `TEBRA_FHIR_CLIENT_ID` | For FHIR | OAuth2 client ID from Tebra appSphere registration |
 | `TEBRA_FHIR_CLIENT_SECRET` | For FHIR | OAuth2 client secret |
-| `TEBRA_FHIR_BASE_URL` | No | FHIR R4 base URL (defaults to Tebra production) |
+| `TEBRA_FHIR_BASE_URL` | No | FHIR R4 base URL (defaults to `https://fhir.prd.cloud.tebra.com/fhir-request`) |
+| `TEBRA_FHIR_TOKEN_URL` | No | OAuth2 token endpoint (defaults to Tebra production) |
+| `TEBRA_FHIR_SCOPE` | No | OAuth2 scope (defaults to `system/*.read`; match your appSphere registration) |
 
-FHIR credentials are obtained from the Tebra Developer Portal under API > FHIR Access. The server uses OAuth2 client credentials flow with automatic token caching and refresh.
+FHIR credentials are obtained through Tebra appSphere. The server uses the OAuth2 client credentials flow with automatic token caching, refresh 60s before expiry, and a one-shot retry on 401. Note: both the practice and the backend-service client must be activated by Tebra Customer Care before tokens are issued — a 401 can mean "not yet activated" rather than "bad credentials".
 
 ## Installation
 
@@ -106,26 +108,27 @@ Add to your MCP settings:
 }
 ```
 
-## Available Tools (45 total)
+## Available Tools (47 total)
 
 ### Patient Management
 
 | Tool | Description |
 |---|---|
-| `tebra_search_patients` | Search patients by name, DOB, MRN, or external ID (20+ filters) |
-| `tebra_get_patient` | Get full patient record with insurance, cases, and authorizations |
-| `tebra_create_patient` | Register a new patient with demographics and insurance |
-| `tebra_update_patient` | Update patient demographics, contact info, or insurance |
+| `tebra_search_patients` | Search patients by name, DOB range, insurance, practice, and more (16 server-side filters) |
+| `tebra_get_patient` | Get full patient record (by Tebra ID or external ID) with cases, insurance policies, and authorizations |
+| `tebra_create_patient` | Register a new patient with demographics, insurance, and guarantor |
+| `tebra_update_patient` | Update patient demographics and contact info |
 | `tebra_get_all_patients` | Bulk patient retrieval with pagination (for sync operations) |
 
 ### Appointments
 
 | Tool | Description |
 |---|---|
-| `tebra_get_appointments` | Search appointments by date range, provider, or patient |
-| `tebra_get_appointment_detail` | Get full appointment detail including reason, notes, and history |
-| `tebra_create_appointment` | Create an appointment (requires provider, location, reason IDs) |
-| `tebra_update_appointment` | Update, reschedule, or cancel an existing appointment |
+| `tebra_get_appointments` | Search appointments by date range, resource (provider), patient, status, location |
+| `tebra_get_appointment_detail` | Get full appointment detail including recurrence, group data, and resources |
+| `tebra_create_appointment` | Create an appointment (provider, location, start time + duration/end) |
+| `tebra_update_appointment` | Update or reschedule an existing appointment |
+| `tebra_update_appointment_status` | Change only the status (Confirmed, CheckedIn, NoShow, Cancelled, ...) |
 | `tebra_delete_appointment` | Permanently delete an appointment |
 | `tebra_get_appointment_reasons` | List configured appointment types/reasons for the practice |
 | `tebra_create_appointment_reason` | Create a new appointment type/reason |
@@ -134,11 +137,11 @@ Add to your MCP settings:
 
 | Tool | Description |
 |---|---|
-| `tebra_get_encounter` | Get encounter details with linked charges, diagnoses, and procedures |
-| `tebra_create_encounter` | Create an encounter (superbill) with diagnoses and procedures |
-| `tebra_update_encounter_status` | Workflow transitions: Draft -> Review -> Approved or Rejected |
-| `tebra_get_charges` | Search charges with 20+ filters (date, patient, provider, status) |
-| `tebra_get_payments` | Search payment records with date and patient filters |
+| `tebra_get_encounter` | Get encounter details with status, providers, and service line IDs |
+| `tebra_create_encounter` | Create an encounter (superbill) with per-line diagnoses and procedures |
+| `tebra_update_encounter_status` | Workflow transitions: Draft -> Submitted -> Approved / Rejected / Unpayable |
+| `tebra_get_charges` | Search charges with 18 filters (dates, patient name, provider, status) |
+| `tebra_get_payments` | Search payment records by post date, payer, batch, reference number |
 | `tebra_create_payment` | Post a payment to a patient account |
 
 ### Insurance & Authorizations
@@ -179,14 +182,17 @@ Add to your MCP settings:
 | `tebra_register_external_vendor` | Register an external vendor for ID linking |
 | `tebra_get_external_vendors` | List registered external vendors |
 | `tebra_update_patient_external_id` | Link an external system ID to a Tebra patient |
-| `tebra_update_patient_case` | Update a patient's case details |
+| `tebra_set_primary_patient_case` | Promote an existing patient case to primary (by case ID) |
 
 ### FHIR Clinical Data (requires FHIR credentials)
 
 These tools access clinical data via the Tebra FHIR R4 API. They require separate FHIR credentials (see Environment Variables above). If FHIR credentials are not configured, these tools will not be registered.
 
+FHIR patient IDs are a different identifier space from SOAP patient IDs — use `tebra_fhir_search_patients` to resolve them. All FHIR searches follow Bundle pagination automatically (up to 10 pages), and the three resources where Tebra requires a second search parameter (MedicationRequest `intent`, CarePlan `category`, CareTeam `status`) get sensible defaults so they don't silently return empty.
+
 | Tool | Description |
 |---|---|
+| `tebra_fhir_search_patients` | Find FHIR patient IDs by name, birthdate, or identifier |
 | `tebra_fhir_get_allergies` | Patient allergy and intolerance list |
 | `tebra_fhir_get_medications` | Active and historical medication list |
 | `tebra_fhir_get_conditions` | Problem list / active conditions |
@@ -229,10 +235,18 @@ On top of client-side throttling, every SOAP call retries up to 3 times with exp
 
 ```
 1. tebra_create_encounter            -- Create superbill (status: Draft)
-2. tebra_update_encounter_status     -- Move to Review
+2. tebra_update_encounter_status     -- Move to Submitted (shows as "Review" in Tebra's UI)
 3. tebra_update_encounter_status     -- Move to Approved (triggers billing)
    OR
-3. tebra_update_encounter_status     -- Reject back to Draft with reason
+3. tebra_update_encounter_status     -- Reject back to Draft
+```
+
+### Front-Desk Check-In Flow
+
+```
+1. tebra_get_appointments             -- Today's schedule (resourceName = provider)
+2. tebra_update_appointment_status    -- CheckedIn on arrival
+3. tebra_update_appointment_status    -- CheckedOut at departure
 ```
 
 ### Payment Posting Flow
@@ -272,15 +286,16 @@ Some tools require IDs obtained from other tools. Key dependencies:
 
 ```
 tebra_create_appointment
+  requires: patientId    (from tebra_search_patients or tebra_create_patient)
   requires: providerId   (from tebra_get_providers)
   requires: locationId   (from tebra_get_service_locations)
-  requires: reasonId     (from tebra_get_appointment_reasons)
-  optional: patientId    (from tebra_search_patients or tebra_create_patient)
+  optional: reasonId     (from tebra_get_appointment_reasons)
 
 tebra_create_encounter
   requires: patientId    (from tebra_search_patients)
   requires: providerId   (from tebra_get_providers)
-  optional: authId       (from tebra_get_patient_authorizations)
+  recommended: practiceName/practiceId (from tebra_get_practices)
+  optional: authorization number (from tebra_get_patient_authorizations)
 
 tebra_create_payment
   requires: patientId    (from tebra_search_patients)
@@ -292,25 +307,31 @@ tebra_create_document
   requires: patientId    (from tebra_search_patients)
 
 tebra_update_patient_external_id
-  requires: patientId    (from tebra_search_patients or tebra_create_patient)
+  requires: patientId        (from tebra_search_patients or tebra_create_patient)
+  recommended: externalVendorId (from tebra_get_external_vendors)
 
-All FHIR tools
-  require: patientId     (from tebra_search_patients)
+tebra_set_primary_patient_case
+  requires: patientCaseId (from tebra_get_patient — cases[].caseId)
+
+All clinical tebra_fhir_get_* tools
+  require: FHIR patientId (from tebra_fhir_search_patients — NOT the SOAP patient ID)
 ```
 
 ## API Reference
 
 The server wraps two Tebra APIs:
 
-**SOAP API v2.1** (33 tools)
+**SOAP API v2.1** (34 tools)
 - Endpoint: `https://webservice.kareo.com/services/soap/2.1/KareoServices.svc`
-- Auth: RequestHeader with User, Password, CustomerKey
+- Auth: RequestHeader with CustomerKey, Password, User (WSDL sequence order matters)
+- Request bodies generated in WSDL (`?xsd=xsd0`/`xsd7`) member order — WCF silently drops out-of-order members
 - All requests include retry with exponential backoff (3 attempts at 1s, 2s, 4s)
 
-**FHIR R4 API** (12 tools)
-- Endpoint: `https://fhir.kareo.com/r4` (configurable)
-- Auth: OAuth2 client credentials flow
-- Token caching with automatic refresh before expiry
+**FHIR R4 API** (13 tools)
+- Endpoint: `https://fhir.prd.cloud.tebra.com/fhir-request` (note the hyphen — configurable via `TEBRA_FHIR_BASE_URL`)
+- Auth: OAuth2 client credentials flow against `https://fhir.prd.cloud.tebra.com/smartauth/oauth/token`
+- Token caching with automatic refresh before expiry and one-shot 401 retry
+- Bundle pagination followed automatically (up to 10 pages per search)
 
 ## Development
 
@@ -321,11 +342,35 @@ npm install
 
 npm run dev    # tsx — runs src/index.ts directly without a build step
 npm run build  # tsc — compiles to dist/
-npm test       # node:test via tsx — runs the SOAP client regression suite
+npm test       # node:test via tsx — 37 regression tests covering wire-format invariants
 npm start      # node dist/index.js — runs the compiled output
 ```
 
+The regression suite pins the three Tebra wire-format invariants (SOAPAction contract segment, RequestHeader order, empty-Fields/populated-Filter) plus per-tool WSDL member order for every request builder — the failure mode for all of these is a silent empty result, not an error, so the tests are the only fast feedback loop.
+
+## Roadmap
+
+- Live smoke-test suite for the 0.4.0 write shapes against a sandbox practice (shapes are WSDL-derived and unit-pinned; production verification is the remaining step)
+- Client-side pagination (`limit`/`offset` + `has_more`) on the large list tools, mirroring `tebra_get_all_patients`
+- Zod runtime validation with `.strict()` schemas so misspelled arguments fail loudly instead of being dropped
+- Migration from `Server.setRequestHandler` to the SDK's `McpServer`/`registerTool` API, adding `outputSchema`/`structuredContent`
+- Agent-facing evaluation set (10 read-only, verifiable questions) to catch wrong-but-plausible data — the failure class unit tests cannot see
+
 ## Changelog
+
+### 0.4.0 (2026-08-03)
+
+Full-surface WSDL contract audit. Every request builder was re-derived from the live WSDL (`KareoServices.svc?xsd=xsd0`/`xsd7`), which surfaced that the Fields/Filter misplacement fixed for GetCharges in 0.3.0 affected **every other list GET**, and that most write operations used wrong wrapper elements or member names. The failure mode in all cases is silent (unfiltered results, dropped fields, or server-side faults), which is why these survived so long. 26 new regression tests pin the corrected shapes.
+
+- **fix(list GETs)**: patients, appointments, payments, transactions, providers, service-locations, procedure-codes, bulk-patients, and encounter-details now put criteria in `<kar:Filter>` (WSDL sequence order) with an empty `<kar:Fields/>` — previously all of their filter args were silently ignored, and every call returned the unfiltered set. Args with no WSDL filter member now fail closed with guidance (`patients.mrn`, `appointments.providerId` → use `resourceName`, `payments.patientId`).
+- **fix(get_patient / authorizations / eligibility)**: `GetPatientReq` has no Fields member at all — the ID now goes in `Filter` (SinglePatientFilter), so single-patient lookup works. `tebra_get_patient` also gains lookup by `externalId`/`externalVendorId`.
+- **fix(response parsers)**: real WSDL member names throughout — nested case/policy/authorization data (`PatientCaseData` → `PatientInsurancePolicyData` → `PatientInsurancePolicyAuthorizationData`, `AuthorizedNumberOfVisits`), `MedicalRecordNumber`, `NationalProviderIdentifier`, `PatientBatchData` + `nextStartKey` for bulk paging, `ThrottleDetail`, `ExternalVendorData`, `EncounterDetailsData`. Previous names matched nothing, so insurance/auth/case data always parsed empty. All list parsers drop Tebra's phantom empty placeholder row.
+- **fix(writes)**: `create/update_patient` members re-ordered to WSDL sequence (out-of-order members were silently dropped — DOB, gender, email, address never persisted) with correct names (`SocialSecurityNumber`, `PatientExternalID`, `MedicalRecordNumber`) and insurance nested under `Cases → Policies`; `create/update_appointment` rewritten to the flat `AppointmentCreate/Update` shape (`StartTime`/`EndTime`, `PatientSummary`, `ProviderId`); `delete_appointment` wraps `Appointment`; `create_encounter` rewritten to `EncounterCreate` (per-service-line `DiagnosisCode1–4`, `RenderingProvider`, `Practice`); `update_encounter_status` wraps `EncounterUpdateStatus` with the real enum (`Draft/Submitted/Approved/Rejected/Unpayable` — "Review" is a UI label, not an API status); `create_payment` uses the `PaymentCreate` nested groups; `create_document` wraps `DocumentToCreate` in member order; `delete_document` sends `DocumentId` (case-sensitive); external-ID tools use `ExternalVendor` / `Updates→UpdateBatch` batch shapes; `create_appointment_reason` in member order with integer color; `validate_connection` sends the credentials `GetCustomerIdFromKeyRequest` actually expects.
+- **change**: `tebra_update_patient_case` → `tebra_set_primary_patient_case` — the underlying op (`UpdatePrimaryPatientCase`) only promotes a case to primary by `PatientCaseId`; it never accepted name/payer-scenario edits. Old tool name still routes.
+- **new**: `tebra_update_appointment_status` — targeted status changes (CheckedIn/NoShow/Cancelled...) via `UpdateAppointmentStatus`, cheaper than a full update.
+- **fix(FHIR)**: default base URL corrected to `https://fhir.prd.cloud.tebra.com/fhir-request` (hyphen — the old `/fhir/request` path returns HTTP 200 with an empty body for every call, verified live 2026-08-03); empty-200 responses now raise a descriptive configuration error; 401 triggers one automatic token refresh + retry; from/to date ranges emit two repeated `date` params (previously percent-encoded into one malformed value); Bundle pagination followed automatically (`link[rel=next]`, up to 10 pages, truncation flagged); required second search params defaulted (`MedicationRequest intent=order`, `CarePlan category=assess-plan`, `CareTeam status=active`) — without them Tebra returns a silent empty bundle.
+- **new**: `tebra_fhir_search_patients` — FHIR Patient lookup by name/birthdate/identifier; FHIR patient IDs are a separate identifier space from SOAP IDs and previously had no in-server resolution path.
+- **fix(core)**: `extractTag`/`extractAllTags` require a tag-name boundary (`Patient` no longer matches `PatientData`); server version is read from package.json (was hardcoded `0.2.5`); server name corrected to `tebra-mcp-server`; rate-limit table keys `CreatePayment`/`UpdateAppointmentStatus`.
 
 ### 0.3.2 (2026-07-15)
 - **chore**: removed the bundled project-specific integration templates (`src/integrations/epic-notes-integration.ts`, `src/integrations/fal-integration.ts`) and every reference to them (README "Integration Services" section, workflow-example labels, contributor docs). These were copy-paste connector modules for external downstream projects — never imported by the server and not part of its runtime — so they did not belong in the published package. No MCP tools were added or removed; the 45-tool surface is unchanged and the compiled tarball no longer ships `dist/integrations/`.

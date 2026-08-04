@@ -1,15 +1,35 @@
 /**
  * Tebra MCP tools: Bulk patient retrieval with pagination.
+ *
+ * GetAllPatientsReq = { Fields: PatientBatchFieldsToReturn, Filter:
+ * PatientBatchGetFilter } where the filter carries the paging controls
+ * (WSDL sequence: BatchSize → PracticeID → StartKey). The response is
+ * PatientBatchData blocks plus a Key block whose nextStartKey member
+ * drives the next page. There is no server-side active/inactive filter —
+ * isActive is applied client-side after parsing.
  */
 
 import type { TebraConfig } from '../config.js';
-import {
-  soapRequest,
-  escapeXml,
-  extractTag,
-  extractAllTags,
-  extractNumber,
-} from '../soap-client.js';
+import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
+
+// ─── Request Body Builder (exported for tests) ──────────────────
+
+export function buildGetAllPatientsBody(args: Record<string, unknown>): string {
+  const batchSize = args.batchSize != null ? Number(args.batchSize) : 200;
+  const startKey = args.startKey ? String(args.startKey) : '';
+  const practiceId = args.practiceId ? String(args.practiceId) : '';
+
+  // PatientBatchGetFilter WSDL sequence: BatchSize → PracticeID → StartKey.
+  return `
+    <kar:request>
+      <kar:Fields />
+      <kar:Filter>
+        <kar:BatchSize>${batchSize}</kar:BatchSize>
+        ${practiceId ? `<kar:PracticeID>${escapeXml(practiceId)}</kar:PracticeID>` : ''}
+        ${startKey ? `<kar:StartKey>${escapeXml(startKey)}</kar:StartKey>` : ''}
+      </kar:Filter>
+    </kar:request>`;
+}
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -29,9 +49,13 @@ export const bulkPatientTools = [
           type: 'string',
           description: 'Continuation key from previous response (omit for first page)',
         },
+        practiceId: {
+          type: 'string',
+          description: 'Optional practice ID filter',
+        },
         isActive: {
           type: 'boolean',
-          description: 'Optional filter: true for active patients only, false for inactive only',
+          description: 'Optional filter: true for active patients only, false for inactive only (applied client-side; the returned count reflects the filtered page)',
         },
       },
       required: [],
@@ -50,49 +74,40 @@ export async function handleBulkPatientTool(
     return { content: [{ type: 'text', text: `Unknown bulk patient tool: ${name}` }] };
   }
 
-  const batchSize = args.batchSize != null ? Number(args.batchSize) : 200;
-  const startKey = args.startKey ? String(args.startKey) : undefined;
-  const isActive = args.isActive != null ? args.isActive : undefined;
-
-  const fieldsXml = [
-    `<kar:BatchSize>${batchSize}</kar:BatchSize>`,
-    startKey ? `<kar:StartKey>${escapeXml(startKey)}</kar:StartKey>` : '',
-    isActive != null ? `<kar:Active>${isActive ? 'true' : 'false'}</kar:Active>` : '',
-  ]
-    .filter(Boolean)
-    .join('\n        ');
-
-  const bodyXml = `
-    <kar:request>
-      <kar:Fields>
-        ${fieldsXml}
-      </kar:Fields>
-      <kar:Filter />
-    </kar:request>`;
-
+  const bodyXml = buildGetAllPatientsBody(args);
   const xml = await soapRequest(config, 'GetAllPatients', bodyXml);
-  const blocks = extractAllTags(xml, 'PatientData');
-  const nextStartKey = extractTag(xml, 'NextStartKey') || null;
+  const blocks = extractAllTags(xml, 'PatientBatchData');
+  const keyBlock = extractTag(xml, 'Key');
+  const nextStartKey = keyBlock ? extractTag(keyBlock, 'nextStartKey') : '';
 
-  const patients = blocks.map((block) => ({
-    patientId: extractTag(block, 'PatientID') || extractTag(block, 'ID'),
-    firstName: extractTag(block, 'FirstName'),
-    lastName: extractTag(block, 'LastName'),
-    dateOfBirth: extractTag(block, 'DateofBirth') || extractTag(block, 'DOB'),
-    mrn: extractTag(block, 'MRN'),
-    active: extractTag(block, 'Active'),
-    insurances: extractAllTags(block, 'InsurancePolicyData').map((ins) => ({
-      payerName: extractTag(ins, 'PayerName') || extractTag(ins, 'CompanyName'),
-      memberId: extractTag(ins, 'MemberNumber') || extractTag(ins, 'PolicyNumber'),
-      isPrimary: (extractNumber(ins, 'SequenceNumber') || 1) === 1,
-    })),
-  }));
+  let patients = blocks
+    .map((block) => ({
+      patientId: extractTag(block, 'ID'),
+      firstName: extractTag(block, 'FirstName'),
+      lastName: extractTag(block, 'LastName'),
+      dateOfBirth: extractTag(block, 'DOB'),
+      mrn: extractTag(block, 'MedicalRecordNumber'),
+      active: extractTag(block, 'Active'),
+      gender: extractTag(block, 'Gender'),
+      mobilePhone: extractTag(block, 'MobilePhone'),
+      email: extractTag(block, 'EmailAddress'),
+      practiceName: extractTag(block, 'PracticeName'),
+      primaryInsurance: extractTag(block, 'PrimaryInsurancePolicyCompanyName'),
+      secondaryInsurance: extractTag(block, 'SecondaryInsurancePolicyCompanyName'),
+    }))
+    // Drop the phantom placeholder block Tebra emits on empty result sets.
+    .filter((patient) => patient.patientId !== '');
+
+  if (args.isActive != null) {
+    const want = args.isActive ? 'true' : 'false';
+    patients = patients.filter((p) => p.active.toLowerCase() === want);
+  }
 
   const result = {
     patients,
     count: patients.length,
-    nextStartKey,
-    hasMore: nextStartKey !== null && nextStartKey !== '',
+    nextStartKey: nextStartKey || null,
+    hasMore: nextStartKey !== '' && nextStartKey !== '0',
   };
 
   return {

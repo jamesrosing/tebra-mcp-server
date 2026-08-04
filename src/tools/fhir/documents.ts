@@ -5,9 +5,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   codeDisplay,
   refDisplay,
@@ -59,14 +57,12 @@ export async function handleFhirDocumentTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const params: Record<string, string> = { patient: patientId };
+  const params: Record<string, string | string[]> = { patient: patientId };
   if (args.type) params.type = String(args.type);
 
-  const data = await fhirRequest(config, 'DocumentReference', params);
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'documents', summarize);
+  const { resources, truncated } = await searchFhir('DocumentReference', params);
+  return formatFhirResult(resources, 'documents', summarize, truncated);
 }

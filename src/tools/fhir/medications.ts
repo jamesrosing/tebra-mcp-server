@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   codeDisplay,
   refDisplay,
@@ -28,6 +26,10 @@ export const fhirMedicationTools = [
           type: 'string',
           enum: ['active', 'completed', 'stopped'],
           description: 'Filter by medication status',
+        },
+        intent: {
+          type: 'string',
+          description: "MedicationRequest intent (Tebra requires this search param; default 'order')",
         },
       },
       required: ['patientId'],
@@ -53,14 +55,17 @@ export async function handleFhirMedicationTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const params: Record<string, string> = { patient: patientId };
+  // Tebra requires the intent param alongside patient — omitting it returns
+  // a silent empty bundle (FHIR API User Guide, search parameter tables).
+  const params: Record<string, string | string[]> = {
+    patient: patientId,
+    intent: args.intent ? String(args.intent) : 'order',
+  };
   if (args.status) params.status = String(args.status);
 
-  const data = await fhirRequest(config, 'MedicationRequest', params);
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'medications', summarize);
+  const { resources, truncated } = await searchFhir('MedicationRequest', params);
+  return formatFhirResult(resources, 'medications', summarize, truncated);
 }

@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   addDateRange,
   summarizeObservation,
@@ -41,17 +39,15 @@ export async function handleFhirVitalsTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const params: Record<string, string> = {
+  const params: Record<string, string | string[]> = {
     patient: patientId,
     category: 'vital-signs',
   };
   addDateRange(params, args);
 
-  const data = await fhirRequest(config, 'Observation', params);
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'vital signs', summarizeObservation);
+  const { resources, truncated } = await searchFhir('Observation', params);
+  return formatFhirResult(resources, 'vital signs', summarizeObservation, truncated);
 }

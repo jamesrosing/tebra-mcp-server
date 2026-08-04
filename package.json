@@ -1,8 +1,8 @@
 {
   "name": "tebra-mcp-server",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "mcpName": "com.jamesrosingmd/tebra",
-  "description": "MCP server for Tebra/Kareo practice management — 45 tools covering patients, appointments, encounters, billing, payments, documents, providers, and FHIR clinical data for AI agents via the Model Context Protocol",
+  "description": "MCP server for Tebra/Kareo practice management — 47 tools covering patients, appointments, encounters, billing, payments, documents, providers, and FHIR clinical data for AI agents via the Model Context Protocol",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
@@ -18,7 +18,7 @@
     "prepublishOnly": "npm run build",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "test": "tsx --test src/__tests__/soap-client.test.ts src/__tests__/charges-request-body.test.ts"
+    "test": "tsx --test src/__tests__/*.test.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"

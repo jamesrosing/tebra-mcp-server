@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   codeDisplay,
   refDisplay,
@@ -56,14 +54,12 @@ export async function handleFhirDiagnosticReportTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const params: Record<string, string> = { patient: patientId };
+  const params: Record<string, string | string[]> = { patient: patientId };
   if (args.category) params.category = String(args.category);
 
-  const data = await fhirRequest(config, 'DiagnosticReport', params);
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'diagnostic reports', summarize);
+  const { resources, truncated } = await searchFhir('DiagnosticReport', params);
+  return formatFhirResult(resources, 'diagnostic reports', summarize, truncated);
 }

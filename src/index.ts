@@ -16,10 +16,12 @@
  *   TEBRA_FHIR_CLIENT_SECRET — FHIR OAuth2 client secret
  *
  * Usage:
- *   npx @allure-md/tebra-mcp-server
+ *   npx tebra-mcp-server
  *   TEBRA_SOAP_USER=... TEBRA_SOAP_PASSWORD=... TEBRA_CUSTOMER_KEY=... node dist/index.js
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -66,6 +68,7 @@ import { fhirCareTeamTools, handleFhirCareTeamTool } from './tools/fhir/care-tea
 import { fhirDiagnosticReportTools, handleFhirDiagnosticReportTool } from './tools/fhir/diagnostic-reports.js';
 import { fhirDocumentTools, handleFhirDocumentTool } from './tools/fhir/documents.js';
 import { fhirDeviceTools, handleFhirDeviceTool } from './tools/fhir/devices.js';
+import { fhirPatientTools, handleFhirPatientTool } from './tools/fhir/patients.js';
 
 // ─── Validate config on startup ─────────────────────────────────
 
@@ -73,10 +76,23 @@ const config = getConfig();
 
 // ─── Create MCP Server ──────────────────────────────────────────
 
+// package.json ships with the npm package (dist/ is one level below it), so
+// the version is read at startup instead of being duplicated in code.
+function getPackageVersion(): string {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(__dirname, '..', 'package.json'), 'utf8')
+    ) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 const server = new Server(
   {
-    name: '@allure-md/tebra-mcp-server',
-    version: '0.2.5',  // Keep in sync with package.json
+    name: 'tebra-mcp-server',
+    version: getPackageVersion(),
   },
   {
     capabilities: {
@@ -126,29 +142,82 @@ if (isFhirConfigured()) {
     ...fhirDiagnosticReportTools,
     ...fhirDocumentTools,
     ...fhirDeviceTools,
+    ...fhirPatientTools,
   );
-  console.error('FHIR tools enabled — 12 clinical data tools registered');
+  console.error('FHIR tools enabled — 13 clinical data tools registered');
 } else {
   console.error('FHIR tools disabled — set TEBRA_FHIR_CLIENT_ID and TEBRA_FHIR_CLIENT_SECRET to enable clinical data tools');
 }
 
 console.error(`Tebra MCP server: ${allTools.length} tools registered`);
 
+// ─── Tool Annotations & Titles ──────────────────────────────────
+// MCP tool annotations are derived from the verb in the tool name so hosts
+// can distinguish read-only lookups from writes and flag destructive ops.
+// openWorldHint is true throughout — every tool talks to Tebra's live API.
+
+function annotationsFor(name: string): Record<string, unknown> {
+  if (/^tebra_(fhir_)?(get|search|check|validate)_/.test(name)) {
+    return { readOnlyHint: true, openWorldHint: true };
+  }
+  if (/^tebra_delete_/.test(name)) {
+    return { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
+  }
+  if (/^tebra_(update|set)_/.test(name)) {
+    return { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+  }
+  // create / register — additive, not idempotent (retries create duplicates).
+  return { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
+}
+
+function titleFor(name: string): string {
+  const fhir = name.startsWith('tebra_fhir_');
+  const words = name
+    .replace(/^tebra_(fhir_)?/, '')
+    .split('_')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+  return fhir ? `${words} (FHIR)` : words;
+}
+
+const annotatedTools = allTools.map((tool) => ({
+  ...tool,
+  title: titleFor(tool.name),
+  annotations: { title: titleFor(tool.name), ...annotationsFor(tool.name) },
+}));
+
 // ─── Tool Listing ───────────────────────────────────────────────
 
 server.setRequestHandler(ListToolsRequestSchema, async () => {
-  return { tools: allTools };
+  return { tools: annotatedTools };
 });
 
 // ─── Tool Execution ─────────────────────────────────────────────
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
+// Cap tool output so one broad query cannot flood the client's context.
+const RESPONSE_CHAR_LIMIT = 25_000;
 
-  try {
-    const safeArgs = args ?? {};
+function capResponse(result: { content: Array<{ type: string; text: string }>; isError?: boolean }) {
+  return {
+    ...result,
+    content: result.content.map((block) =>
+      block.type === 'text' && block.text.length > RESPONSE_CHAR_LIMIT
+        ? {
+            ...block,
+            text:
+              block.text.slice(0, RESPONSE_CHAR_LIMIT) +
+              `\n\n… [response truncated at ${RESPONSE_CHAR_LIMIT} characters — narrow the date range or add filters to see the rest]`,
+          }
+        : block
+    ),
+  };
+}
 
-    switch (name) {
+async function routeToolCall(
+  name: string,
+  safeArgs: Record<string, unknown>
+): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
+  switch (name) {
       // ─── Patient tools ──────────────────────────────
       case 'tebra_search_patients':
       case 'tebra_get_patient':
@@ -185,6 +254,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'tebra_create_appointment':
       case 'tebra_update_appointment':
+      case 'tebra_update_appointment_status':
       case 'tebra_delete_appointment':
         return await handleAppointmentCrudTool(name, safeArgs, config);
 
@@ -228,7 +298,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'tebra_get_throttles':
       case 'tebra_validate_connection':
-      case 'tebra_update_patient_case':
+      case 'tebra_set_primary_patient_case':
+      case 'tebra_update_patient_case':  // legacy alias
       case 'tebra_create_appointment_reason':
         return await handleSystemTool(name, safeArgs, config);
 
@@ -269,13 +340,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case 'tebra_fhir_get_devices':
         return await handleFhirDeviceTool(name, safeArgs);
 
+      case 'tebra_fhir_search_patients':
+        return await handleFhirPatientTool(name, safeArgs);
+
       default:
         return {
           content: [{ type: 'text', text: `Unknown tool: ${name}` }],
           isError: true,
         };
-    }
+  }
+}
+
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  try {
+    const result = await routeToolCall(name, args ?? {});
+    return capResponse(result);
   } catch (error) {
+    // Handlers throw for validation failures and upstream errors alike;
+    // both surface to the client as isError results with actionable text.
     const message = error instanceof Error ? error.message : String(error);
     return {
       content: [{ type: 'text', text: `Error in ${name}: ${message}` }],

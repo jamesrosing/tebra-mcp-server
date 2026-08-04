@@ -1,5 +1,17 @@
 /**
- * Tebra MCP tools: System utilities — throttles, connection validation, patient case, appointment reason creation.
+ * Tebra MCP tools: System utilities — throttles, connection validation,
+ * primary patient case, appointment reason creation.
+ *
+ * WSDL notes (xsd0):
+ *   GetThrottlesReq has no members; the response is ThrottleDetail blocks
+ *     ({ Endpoint, ThrottleTimeMs }).
+ *   GetCustomerIdFromKeyRequest does NOT extend RequestBase — it takes
+ *     CustomerKey → Password → User directly in the request body.
+ *   UpdatePrimaryPatientCaseRequest = { PatientCaseId } — it promotes an
+ *     existing case to primary; it cannot rename a case or set a payer
+ *     scenario.
+ *   CreateAppointmentReasonReq wraps AppointmentReasonCreate (sequence:
+ *     DefaultColorCode(int) → DefaultDurationMinutes → Name → PracticeId).
  */
 
 import type { TebraConfig } from '../config.js';
@@ -11,7 +23,7 @@ export const systemTools = [
   {
     name: 'tebra_get_throttles',
     description:
-      'Get current API rate limit (throttle) data for each endpoint. Useful for monitoring API usage.',
+      'Get the per-endpoint API throttle intervals (milliseconds between calls) that Tebra enforces for this account. Useful for monitoring API usage limits.',
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -21,7 +33,7 @@ export const systemTools = [
   {
     name: 'tebra_validate_connection',
     description:
-      'Validate the Tebra API connection by retrieving the customer ID. Use as a health check.',
+      'Validate the Tebra API credentials by retrieving the customer ID and authorization flag. Use as a health check.',
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -29,32 +41,24 @@ export const systemTools = [
     },
   },
   {
-    name: 'tebra_update_patient_case',
+    name: 'tebra_set_primary_patient_case',
     description:
-      'Update the primary patient case in Tebra. Used to set case name and payer scenario.',
+      'Promote an existing patient case to be the primary case, by case ID. Find case IDs via tebra_get_patient (cases[].caseId). Note: this cannot rename a case or change its payer scenario.',
     inputSchema: {
       type: 'object' as const,
       properties: {
-        patientId: {
+        patientCaseId: {
           type: 'string',
-          description: 'Tebra patient ID',
-        },
-        caseName: {
-          type: 'string',
-          description: 'Optional case name',
-        },
-        payerScenario: {
-          type: 'string',
-          description: 'Optional payer scenario',
+          description: 'Tebra patient case ID to promote to primary',
         },
       },
-      required: ['patientId'],
+      required: ['patientCaseId'],
     },
   },
   {
     name: 'tebra_create_appointment_reason',
     description:
-      'Create a new appointment reason in Tebra with name, default duration, and optional color/category.',
+      'Create a new appointment reason in Tebra with name and default duration. Color is a Tebra color code number (not hex).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -67,12 +71,12 @@ export const systemTools = [
           description: 'Default duration in minutes',
         },
         color: {
-          type: 'string',
-          description: 'Optional color code (hex or named color)',
+          type: 'number',
+          description: 'Optional Tebra color code (integer)',
         },
-        category: {
+        practiceId: {
           type: 'string',
-          description: 'Optional category',
+          description: 'Optional practice ID',
         },
       },
       required: ['name', 'duration'],
@@ -89,20 +93,20 @@ export async function handleSystemTool(
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   switch (name) {
     case 'tebra_get_throttles': {
+      // GetThrottlesReq carries only the request header.
       const bodyXml = `
         <kar:request>
-          <kar:Fields />
         </kar:request>`;
 
       const xml = await soapRequest(config, 'GetThrottles', bodyXml);
-      const blocks = extractAllTags(xml, 'ThrottleData');
+      const blocks = extractAllTags(xml, 'ThrottleDetail');
 
-      const throttles = blocks.map((block) => ({
-        endpoint: extractTag(block, 'Endpoint') || extractTag(block, 'Name'),
-        limit: extractTag(block, 'Limit'),
-        remaining: extractTag(block, 'Remaining'),
-        resetTime: extractTag(block, 'ResetTime'),
-      }));
+      const throttles = blocks
+        .map((block) => ({
+          endpoint: extractTag(block, 'Endpoint'),
+          throttleTimeMs: extractTag(block, 'ThrottleTimeMs'),
+        }))
+        .filter((throttle) => throttle.endpoint !== '');
 
       if (throttles.length === 0) {
         return {
@@ -116,42 +120,44 @@ export async function handleSystemTool(
     }
 
     case 'tebra_validate_connection': {
+      // GetCustomerIdFromKeyRequest takes credentials directly (it does not
+      // extend RequestBase): CustomerKey → Password → User.
       const bodyXml = `
         <kar:request>
-          <kar:Fields />
+          <kar:CustomerKey>${escapeXml(config.customerKey)}</kar:CustomerKey>
+          <kar:Password>${escapeXml(config.password)}</kar:Password>
+          <kar:User>${escapeXml(config.user)}</kar:User>
         </kar:request>`;
 
       const xml = await soapRequest(config, 'GetCustomerIdFromKey', bodyXml);
-      const customerId = extractTag(xml, 'CustomerID') || extractTag(xml, 'ID');
+      const customerId = extractTag(xml, 'CustomerId');
+      const isAuthorized = extractTag(xml, 'IsAuthorized');
 
       return {
         content: [{
           type: 'text',
           text: JSON.stringify({
-            valid: !!customerId,
+            valid: !!customerId && isAuthorized.toLowerCase() !== 'false',
             customerId: customerId || null,
+            isAuthorized: isAuthorized || null,
             message: customerId
               ? 'Connection validated successfully.'
-              : 'Connection validation returned no customer ID.',
+              : 'Connection validation returned no customer ID — check credentials.',
           }, null, 2),
         }],
       };
     }
 
+    case 'tebra_set_primary_patient_case':
     case 'tebra_update_patient_case': {
-      const patientId = String(args.patientId ?? '');
-      if (!patientId) {
-        return { content: [{ type: 'text', text: 'patientId is required.' }] };
+      const patientCaseId = String(args.patientCaseId ?? '');
+      if (!patientCaseId) {
+        throw new Error('patientCaseId is required. Find case IDs via tebra_get_patient (cases[].caseId). Note: UpdatePrimaryPatientCase only promotes a case to primary — it cannot set case name or payer scenario.');
       }
-
-      const caseName = args.caseName ? String(args.caseName) : undefined;
-      const payerScenario = args.payerScenario ? String(args.payerScenario) : undefined;
 
       const bodyXml = `
         <kar:request>
-          <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
-          ${caseName ? `<kar:CaseName>${escapeXml(caseName)}</kar:CaseName>` : ''}
-          ${payerScenario ? `<kar:PayerScenario>${escapeXml(payerScenario)}</kar:PayerScenario>` : ''}
+          <kar:PatientCaseId>${escapeXml(patientCaseId)}</kar:PatientCaseId>
         </kar:request>`;
 
       await soapRequest(config, 'UpdatePrimaryPatientCase', bodyXml);
@@ -160,8 +166,8 @@ export async function handleSystemTool(
         content: [{
           type: 'text',
           text: JSON.stringify({
-            patientId,
-            message: 'Patient case updated successfully.',
+            patientCaseId,
+            message: 'Patient case promoted to primary.',
           }, null, 2),
         }],
       };
@@ -172,26 +178,26 @@ export async function handleSystemTool(
       const duration = args.duration != null ? Number(args.duration) : NaN;
 
       if (!reasonName || isNaN(duration)) {
-        return {
-          content: [{ type: 'text', text: 'name and duration are required.' }],
-        };
+        throw new Error('name and duration are required.');
       }
 
-      const color = args.color ? String(args.color) : undefined;
-      const category = args.category ? String(args.category) : undefined;
+      const color = args.color != null ? Number(args.color) : NaN;
+      const practiceId = args.practiceId ? String(args.practiceId) : '';
 
+      // AppointmentReasonCreate WSDL sequence: DefaultColorCode →
+      // DefaultDurationMinutes → Name → PracticeId.
       const bodyXml = `
         <kar:request>
           <kar:AppointmentReason>
-            <kar:Name>${escapeXml(reasonName)}</kar:Name>
+            ${!isNaN(color) ? `<kar:DefaultColorCode>${color}</kar:DefaultColorCode>` : ''}
             <kar:DefaultDurationMinutes>${duration}</kar:DefaultDurationMinutes>
-            ${color ? `<kar:DefaultColorCode>${escapeXml(color)}</kar:DefaultColorCode>` : ''}
-            ${category ? `<kar:Category>${escapeXml(category)}</kar:Category>` : ''}
+            <kar:Name>${escapeXml(reasonName)}</kar:Name>
+            ${practiceId ? `<kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>` : ''}
           </kar:AppointmentReason>
         </kar:request>`;
 
       const xml = await soapRequest(config, 'CreateAppointmentReason', bodyXml);
-      const reasonId = extractTag(xml, 'AppointmentReasonID') || extractTag(xml, 'ID');
+      const reasonId = extractTag(xml, 'AppointmentReasonId') || extractTag(xml, 'AppointmentReasonID');
 
       return {
         content: [{

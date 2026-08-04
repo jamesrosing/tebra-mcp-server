@@ -44,19 +44,22 @@ export async function handlePracticeTool(
   const xml = await soapRequest(config, 'GetPractices', bodyXml);
   const blocks = extractAllTags(xml, 'PracticeData');
 
-  const practices = blocks.map((block) => ({
-    practiceId: extractTag(block, 'ID'),
-    practiceName: extractTag(block, 'PracticeName'),
-    active: extractTag(block, 'Active'),
-    npi: extractTag(block, 'NPI'),
-    taxId: extractTag(block, 'TaxID'),
-    address: extractTag(block, 'Address'),
-    phone: extractTag(block, 'Phone'),
-    fax: extractTag(block, 'Fax'),
-    email: extractTag(block, 'Email'),
-    webSite: extractTag(block, 'WebSite'),
-    subscriptionEdition: extractTag(block, 'SubscriptionEdition'),
-  }));
+  const practices = blocks
+    .map((block) => ({
+      practiceId: extractTag(block, 'ID'),
+      practiceName: extractTag(block, 'PracticeName'),
+      active: extractTag(block, 'Active'),
+      npi: extractTag(block, 'NPI'),
+      taxId: extractTag(block, 'TaxID'),
+      address: extractTag(block, 'Address'),
+      phone: extractTag(block, 'Phone'),
+      fax: extractTag(block, 'Fax'),
+      email: extractTag(block, 'Email'),
+      webSite: extractTag(block, 'WebSite'),
+      subscriptionEdition: extractTag(block, 'SubscriptionEdition'),
+    }))
+    // Drop the phantom placeholder block Tebra emits on empty result sets.
+    .filter((practice) => practice.practiceId !== '');
 
   if (practices.length === 0) {
     return {

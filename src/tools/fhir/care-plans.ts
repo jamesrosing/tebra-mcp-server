@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   codeDisplay,
   type FhirResource,
@@ -27,6 +25,10 @@ export const fhirCarePlanTools = [
           type: 'string',
           enum: ['active', 'completed', 'draft', 'revoked'],
           description: 'Filter by care plan status',
+        },
+        category: {
+          type: 'string',
+          description: "Care plan category (Tebra requires this search param; default 'assess-plan')",
         },
       },
       required: ['patientId'],
@@ -58,14 +60,17 @@ export async function handleFhirCarePlanTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const params: Record<string, string> = { patient: patientId };
+  // Tebra requires the category param alongside patient — omitting it returns
+  // a silent empty bundle (FHIR API User Guide, search parameter tables).
+  const params: Record<string, string | string[]> = {
+    patient: patientId,
+    category: args.category ? String(args.category) : 'assess-plan',
+  };
   if (args.status) params.status = String(args.status);
 
-  const data = await fhirRequest(config, 'CarePlan', params);
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'care plans', summarize);
+  const { resources, truncated } = await searchFhir('CarePlan', params);
+  return formatFhirResult(resources, 'care plans', summarize, truncated);
 }

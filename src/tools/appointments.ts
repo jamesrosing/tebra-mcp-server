@@ -1,9 +1,51 @@
 /**
  * Tebra MCP tools: Appointment retrieval.
+ *
+ * Criteria go in <kar:Filter> in WSDL AppointmentFilter sequence order —
+ * see filter-helpers.ts and the wire-format quirks in CLAUDE.md. Note the
+ * WSDL has no ProviderID filter member; the scheduler models providers as
+ * resources, so filter by resourceName (provider full name) instead.
  */
 
 import type { TebraConfig } from '../config.js';
-import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
+import { soapRequest, extractTag, extractAllTags } from '../soap-client.js';
+import {
+  buildListGetBody,
+  rejectUnsupportedFilterArg,
+  type FilterSequence,
+} from './filter-helpers.js';
+
+// ─── WSDL Sequence Table (source of truth: ?xsd=xsd0 AppointmentFilter) ──
+
+const APPOINTMENT_FILTER_SEQUENCE: FilterSequence = [
+  ['appointmentReason', 'AppointmentReason'],
+  ['confirmationStatus', 'ConfirmationStatus'],
+  ['endDate', 'EndDate'],
+  ['fromCreatedDate', 'FromCreatedDate'],
+  ['fromLastModifiedDate', 'FromLastModifiedDate'],
+  ['casePayerScenario', 'PatientCasePayerScenario'],
+  ['patientFullName', 'PatientFullName'],
+  ['patientId', 'PatientID'],
+  ['practiceName', 'PracticeName'],
+  ['resourceName', 'ResourceName'],
+  ['serviceLocationName', 'ServiceLocationName'],
+  ['startDate', 'StartDate'],
+  ['timeZoneOffsetFromGMT', 'TimeZoneOffsetFromGMT'],
+  ['toCreatedDate', 'ToCreatedDate'],
+  ['toLastModifiedDate', 'ToLastModifiedDate'],
+  ['appointmentType', 'Type'],
+];
+
+// ─── Request Body Builder (exported for tests) ──────────────────
+
+export function buildGetAppointmentsBody(args: Record<string, unknown>): string {
+  rejectUnsupportedFilterArg(
+    args, 'providerId', 'tebra_get_appointments',
+    "is not an AppointmentFilter member in the Tebra WSDL; filter by 'resourceName' " +
+    '(the provider full name as it appears in the scheduler) instead.'
+  );
+  return buildListGetBody(APPOINTMENT_FILTER_SEQUENCE, args);
+}
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -11,7 +53,7 @@ export const appointmentTools = [
   {
     name: 'tebra_get_appointments',
     description:
-      'Get appointments from Tebra within a date range. Filter by provider, patient, confirmation status, service location, reason, type, and more.',
+      'Get appointments from Tebra within a date range. Filter by resource (provider name), patient, confirmation status, service location, reason, type, and more. To filter by provider, use resourceName with the provider full name (the WSDL has no provider ID filter).',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -23,13 +65,13 @@ export const appointmentTools = [
           type: 'string',
           description: 'End date (ISO 8601, e.g. 2026-03-31)',
         },
-        providerId: {
+        resourceName: {
           type: 'string',
-          description: 'Tebra provider ID to filter by',
+          description: 'Scheduler resource name to filter by — for provider filtering, pass the provider full name',
         },
         confirmationStatus: {
           type: 'string',
-          enum: ['Confirmed', 'CheckedIn', 'NoShow', 'CheckedOut', 'Rescheduled', 'Scheduled', 'Cancelled'],
+          enum: ['Scheduled', 'ReminderSent', 'Confirmed', 'CheckedIn', 'Roomed', 'ReadyToBeSeen', 'CheckedOut', 'NeedsReschedule', 'NoShow', 'Cancelled', 'Rescheduled', 'Tentative'],
           description: 'Filter by confirmation status',
         },
         patientFullName: {
@@ -44,6 +86,10 @@ export const appointmentTools = [
           type: 'string',
           description: 'Filter by service location name',
         },
+        practiceName: {
+          type: 'string',
+          description: 'Filter by practice name',
+        },
         appointmentReason: {
           type: 'string',
           description: 'Filter by appointment reason',
@@ -52,6 +98,10 @@ export const appointmentTools = [
           type: 'string',
           enum: ['U', 'P', 'O'],
           description: 'Filter by type: U=Unknown, P=Patient, O=Other',
+        },
+        timeZoneOffsetFromGMT: {
+          type: 'string',
+          description: 'Time zone offset from GMT for returned times (e.g. -8)',
         },
         fromCreatedDate: {
           type: 'string',
@@ -94,57 +144,32 @@ export async function handleAppointmentTool(
   const endDate = String(args.endDate ?? '');
 
   if (!startDate || !endDate) {
-    return { content: [{ type: 'text', text: 'startDate and endDate are required.' }] };
+    throw new Error('startDate and endDate are required.');
   }
 
-  // Map of arg names to SOAP filter field names
-  const optionalFilterMap: Array<[string, string]> = [
-    ['providerId', 'ProviderID'],
-    ['confirmationStatus', 'ConfirmationStatus'],
-    ['patientFullName', 'PatientFullName'],
-    ['patientId', 'PatientID'],
-    ['serviceLocationName', 'ServiceLocationName'],
-    ['appointmentReason', 'AppointmentReason'],
-    ['appointmentType', 'Type'],
-    ['fromCreatedDate', 'FromCreatedDate'],
-    ['toCreatedDate', 'ToCreatedDate'],
-    ['fromLastModifiedDate', 'FromLastModifiedDate'],
-    ['toLastModifiedDate', 'ToLastModifiedDate'],
-    ['casePayerScenario', 'PatientCasePayerScenario'],
-  ];
-
-  const optionalFields: string[] = [];
-  for (const [argKey, soapField] of optionalFilterMap) {
-    const val = args[argKey];
-    if (val !== undefined && val !== null && val !== '') {
-      optionalFields.push(`<kar:${soapField}>${escapeXml(String(val))}</kar:${soapField}>`);
-    }
-  }
-
-  const bodyXml = `
-    <kar:request>
-      <kar:Fields>
-        <kar:StartDate>${escapeXml(startDate)}</kar:StartDate>
-        <kar:EndDate>${escapeXml(endDate)}</kar:EndDate>
-        ${optionalFields.join('\n        ')}
-      </kar:Fields>
-      <kar:Filter />
-    </kar:request>`;
-
+  const bodyXml = buildGetAppointmentsBody(args);
   const xml = await soapRequest(config, 'GetAppointments', bodyXml);
   const blocks = extractAllTags(xml, 'AppointmentData');
 
-  const appointments = blocks.map((block) => ({
-    appointmentId: extractTag(block, 'AppointmentID') || extractTag(block, 'ID'),
-    patientId: extractTag(block, 'PatientID'),
-    patientName: `${extractTag(block, 'PatientFirstName')} ${extractTag(block, 'PatientLastName')}`.trim(),
-    providerId: extractTag(block, 'ProviderID'),
-    providerName: extractTag(block, 'ProviderFullName'),
-    startDate: extractTag(block, 'StartDate'),
-    endDate: extractTag(block, 'EndDate'),
-    type: extractTag(block, 'AppointmentType'),
-    status: extractTag(block, 'Status') || extractTag(block, 'AppointmentStatus'),
-  }));
+  const appointments = blocks
+    .map((block) => ({
+      appointmentId: extractTag(block, 'ID'),
+      patientId: extractTag(block, 'PatientID'),
+      patientName: extractTag(block, 'PatientFullName'),
+      resourceName: extractTag(block, 'ResourceName1'),
+      startDate: extractTag(block, 'StartDate'),
+      endDate: extractTag(block, 'EndDate'),
+      duration: extractTag(block, 'AppointmentDuration'),
+      type: extractTag(block, 'Type'),
+      confirmationStatus: extractTag(block, 'ConfirmationStatus'),
+      serviceLocationName: extractTag(block, 'ServiceLocationName'),
+      appointmentReason: extractTag(block, 'AppointmentReason1'),
+      practiceName: extractTag(block, 'PracticeName'),
+      authorizationNumber: extractTag(block, 'AuthorizationNumber'),
+      notes: extractTag(block, 'Notes'),
+    }))
+    // Drop the phantom placeholder block Tebra emits on empty result sets.
+    .filter((appt) => appt.appointmentId !== '');
 
   if (appointments.length === 0) {
     return {

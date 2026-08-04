@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   addDateRange,
   summarizeObservation,
@@ -45,18 +43,16 @@ export async function handleFhirLabResultsTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const params: Record<string, string> = {
+  const params: Record<string, string | string[]> = {
     patient: patientId,
     category: 'laboratory',
   };
   addDateRange(params, args);
   if (args.code) params.code = String(args.code);
 
-  const data = await fhirRequest(config, 'Observation', params);
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'lab results', summarizeObservation);
+  const { resources, truncated } = await searchFhir('Observation', params);
+  return formatFhirResult(resources, 'lab results', summarizeObservation, truncated);
 }

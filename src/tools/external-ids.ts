@@ -1,9 +1,43 @@
 /**
  * Tebra MCP tools: External vendor and patient external ID management.
+ *
+ * WSDL shapes (xsd0):
+ *   RegisterExternalVendorReq = { ExternalVendor: { ExternalVendorName } }
+ *   UpdatePatientsExternalIDReq = { Updates: { UpdateBatch:
+ *     PatientExternalIDSetting[] } } — note the camelCase member names
+ *     inside the setting (externalID → externalVendorID → patientID →
+ *     practiceID), which WCF matches case-sensitively.
+ *   GetExternalVendors returns ExternalVendorData blocks
+ *   ({ ExternalVendorID, ExternalVendorName }).
  */
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
+
+// ─── Request Body Builders (exported for tests) ─────────────────
+
+export function buildUpdateExternalIdBody(args: Record<string, unknown>): string {
+  const patientId = String(args.patientId ?? '');
+  const externalId = String(args.externalId ?? '');
+  const externalVendorId = args.externalVendorId ? String(args.externalVendorId) : '';
+  const practiceId = args.practiceId ? String(args.practiceId) : '';
+
+  // PatientExternalIDSetting sequence (camelCase): externalID →
+  // externalVendorID → patientID → practiceID.
+  return `
+        <kar:request>
+          <kar:Updates>
+            <kar:UpdateBatch>
+              <kar:PatientExternalIDSetting>
+                <kar:externalID>${escapeXml(externalId)}</kar:externalID>
+                ${externalVendorId ? `<kar:externalVendorID>${escapeXml(externalVendorId)}</kar:externalVendorID>` : ''}
+                <kar:patientID>${escapeXml(patientId)}</kar:patientID>
+                ${practiceId ? `<kar:practiceID>${escapeXml(practiceId)}</kar:practiceID>` : ''}
+              </kar:PatientExternalIDSetting>
+            </kar:UpdateBatch>
+          </kar:Updates>
+        </kar:request>`;
+}
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -11,7 +45,7 @@ export const externalIdTools = [
   {
     name: 'tebra_update_patient_external_id',
     description:
-      'Set or update a patient external ID in Tebra, linking the patient to an external system.',
+      'Set or update a patient external ID in Tebra, linking the patient to an external system. Register the vendor first with tebra_register_external_vendor and pass its numeric ID as externalVendorId.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -23,9 +57,13 @@ export const externalIdTools = [
           type: 'string',
           description: 'External system ID to assign',
         },
-        vendorName: {
+        externalVendorId: {
           type: 'string',
-          description: 'Optional external vendor name',
+          description: 'External vendor ID from tebra_get_external_vendors (recommended)',
+        },
+        practiceId: {
+          type: 'string',
+          description: 'Optional practice ID',
         },
       },
       required: ['patientId', 'externalId'],
@@ -34,17 +72,13 @@ export const externalIdTools = [
   {
     name: 'tebra_register_external_vendor',
     description:
-      'Register a new external vendor in Tebra for external ID mapping.',
+      'Register a new external vendor in Tebra for external ID mapping. Returns the vendor ID to use with tebra_update_patient_external_id.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         vendorName: {
           type: 'string',
           description: 'Vendor name to register',
-        },
-        vendorDescription: {
-          type: 'string',
-          description: 'Optional vendor description',
         },
       },
       required: ['vendorName'],
@@ -53,7 +87,7 @@ export const externalIdTools = [
   {
     name: 'tebra_get_external_vendors',
     description:
-      'Get all registered external vendors in Tebra.',
+      'Get all registered external vendors in Tebra with their IDs.',
     inputSchema: {
       type: 'object' as const,
       properties: {},
@@ -75,20 +109,10 @@ export async function handleExternalIdTool(
       const externalId = String(args.externalId ?? '');
 
       if (!patientId || !externalId) {
-        return {
-          content: [{ type: 'text', text: 'patientId and externalId are required.' }],
-        };
+        throw new Error('patientId and externalId are required.');
       }
 
-      const vendorName = args.vendorName ? String(args.vendorName) : undefined;
-
-      const bodyXml = `
-        <kar:request>
-          <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
-          <kar:ExternalID>${escapeXml(externalId)}</kar:ExternalID>
-          ${vendorName ? `<kar:VendorName>${escapeXml(vendorName)}</kar:VendorName>` : ''}
-        </kar:request>`;
-
+      const bodyXml = buildUpdateExternalIdBody(args);
       await soapRequest(config, 'UpdatePatientsExternalID', bodyXml);
 
       return {
@@ -106,19 +130,19 @@ export async function handleExternalIdTool(
     case 'tebra_register_external_vendor': {
       const vendorName = String(args.vendorName ?? '');
       if (!vendorName) {
-        return { content: [{ type: 'text', text: 'vendorName is required.' }] };
+        throw new Error('vendorName is required.');
       }
 
-      const vendorDescription = args.vendorDescription ? String(args.vendorDescription) : undefined;
-
+      // RegisterExternalVendorReq = { ExternalVendor: { ExternalVendorName } }.
       const bodyXml = `
         <kar:request>
-          <kar:VendorName>${escapeXml(vendorName)}</kar:VendorName>
-          ${vendorDescription ? `<kar:VendorDescription>${escapeXml(vendorDescription)}</kar:VendorDescription>` : ''}
+          <kar:ExternalVendor>
+            <kar:ExternalVendorName>${escapeXml(vendorName)}</kar:ExternalVendorName>
+          </kar:ExternalVendor>
         </kar:request>`;
 
       const xml = await soapRequest(config, 'RegisterExternalVendor', bodyXml);
-      const vendorId = extractTag(xml, 'VendorID') || extractTag(xml, 'ID');
+      const vendorId = extractTag(xml, 'ExternalVendorID');
 
       return {
         content: [{
@@ -133,19 +157,20 @@ export async function handleExternalIdTool(
     }
 
     case 'tebra_get_external_vendors': {
+      // GetExternalVendorsReq has no members beyond the request header.
       const bodyXml = `
         <kar:request>
-          <kar:Fields />
         </kar:request>`;
 
       const xml = await soapRequest(config, 'GetExternalVendors', bodyXml);
-      const blocks = extractAllTags(xml, 'VendorData');
+      const blocks = extractAllTags(xml, 'ExternalVendorData');
 
-      const vendors = blocks.map((block) => ({
-        vendorId: extractTag(block, 'VendorID') || extractTag(block, 'ID'),
-        vendorName: extractTag(block, 'VendorName') || extractTag(block, 'Name'),
-        vendorDescription: extractTag(block, 'VendorDescription') || extractTag(block, 'Description'),
-      }));
+      const vendors = blocks
+        .map((block) => ({
+          vendorId: extractTag(block, 'ExternalVendorID'),
+          vendorName: extractTag(block, 'ExternalVendorName'),
+        }))
+        .filter((vendor) => vendor.vendorId !== '');
 
       if (vendors.length === 0) {
         return {

@@ -1,5 +1,18 @@
 /**
  * Tebra MCP tools: Patient search and retrieval.
+ *
+ * GetPatients follows the standard list-GET shape (empty Fields + populated
+ * Filter in WSDL sequence order — see filter-helpers.ts and CLAUDE.md quirks).
+ *
+ * GetPatient is different: per the WSDL, GetPatientReq has NO Fields member —
+ * only Filter (SinglePatientFilter: ExternalID → ExternalVendorID → PatientID).
+ * The pre-0.4.0 builds sent PatientID inside a Fields element that doesn't
+ * exist in the schema, so single-patient lookup never resolved the ID.
+ *
+ * Response nesting (WSDL, xsd0):
+ *   PatientData → Cases (PatientCaseData) → InsurancePolicies
+ *   (PatientInsurancePolicyData) → Authorizations
+ *   (PatientInsurancePolicyAuthorizationData)
  */
 
 import type { TebraConfig } from '../config.js';
@@ -10,6 +23,91 @@ import {
   extractAllTags,
   extractNumber,
 } from '../soap-client.js';
+import {
+  buildListGetBody,
+  rejectUnsupportedFilterArg,
+  type FilterSequence,
+} from './filter-helpers.js';
+
+// ─── WSDL Sequence Table (source of truth: ?xsd=xsd0 PatientFilter) ──
+
+const PATIENT_FILTER_SEQUENCE: FilterSequence = [
+  ['firstName', 'FirstName'],
+  ['fromCreatedDate', 'FromCreatedDate'],
+  ['fromDateOfBirth', 'FromDateOfBirth'],
+  ['fromLastEncounterDate', 'FromLastEncounterDate'],
+  ['fromLastModifiedDate', 'FromLastModifiedDate'],
+  ['fullName', 'FullName'],
+  ['gender', 'Gender'],
+  ['isActive', 'IsActive'],
+  ['lastName', 'LastName'],
+  ['practiceName', 'PracticeName'],
+  ['insuranceCompanyName', 'PrimaryInsurancePolicyCompanyName'],
+  ['referringProviderName', 'ReferringProviderFullName'],
+  ['toCreatedDate', 'ToCreatedDate'],
+  ['toDateOfBirth', 'ToDateOfBirth'],
+  ['toLastEncounterDate', 'ToLastEncounterDate'],
+  ['toLastModifiedDate', 'ToLastModifiedDate'],
+];
+
+// ─── Request Body Builders (exported for tests) ─────────────────
+
+export function buildSearchPatientsBody(args: Record<string, unknown>): string {
+  // PatientFilter has no MRN or ExternalID member — fail closed rather than
+  // silently returning every patient in the practice.
+  rejectUnsupportedFilterArg(
+    args, 'mrn', 'tebra_search_patients',
+    'is not a PatientFilter member in the Tebra WSDL; search by name/DOB and ' +
+    "check 'mrn' in the results, or use tebra_get_patient if you have the patient ID."
+  );
+  rejectUnsupportedFilterArg(
+    args, 'externalId', 'tebra_search_patients',
+    "is not a PatientFilter member; use tebra_get_patient with 'externalId' instead."
+  );
+
+  const normalized: Record<string, unknown> = { ...args };
+  // 'query' is the backward-compatible alias for fullName.
+  if (normalized.fullName === undefined && normalized.query !== undefined) {
+    normalized.fullName = normalized.query;
+  }
+  // Exact DOB maps to a single-day DOB range.
+  if (normalized.dateOfBirth) {
+    normalized.fromDateOfBirth ??= normalized.dateOfBirth;
+    normalized.toDateOfBirth ??= normalized.dateOfBirth;
+  }
+
+  return buildListGetBody(PATIENT_FILTER_SEQUENCE, normalized);
+}
+
+export function buildGetPatientBody(args: Record<string, unknown>): string {
+  const patientId = args.patientId !== undefined && args.patientId !== null && args.patientId !== ''
+    ? String(args.patientId) : '';
+  const externalId = args.externalId ? String(args.externalId) : '';
+  const externalVendorId = args.externalVendorId !== undefined && args.externalVendorId !== null && args.externalVendorId !== ''
+    ? String(args.externalVendorId) : '';
+
+  if (!patientId && !externalId) {
+    throw new Error('tebra_get_patient: patientId or externalId is required.');
+  }
+  if (patientId && !/^\d+$/.test(patientId)) {
+    throw new Error(`tebra_get_patient: patientId must be numeric (got '${patientId}').`);
+  }
+
+  // GetPatientReq = { Filter: SinglePatientFilter } — no Fields element.
+  // SinglePatientFilter sequence: ExternalID → ExternalVendorID → PatientID.
+  const parts = [
+    externalId ? `<kar:ExternalID>${escapeXml(externalId)}</kar:ExternalID>` : '',
+    externalVendorId ? `<kar:ExternalVendorID>${escapeXml(externalVendorId)}</kar:ExternalVendorID>` : '',
+    patientId ? `<kar:PatientID>${escapeXml(patientId)}</kar:PatientID>` : '',
+  ].filter(Boolean);
+
+  return `
+    <kar:request>
+      <kar:Filter>
+        ${parts.join('\n        ')}
+      </kar:Filter>
+    </kar:request>`;
+}
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -17,7 +115,7 @@ export const patientTools = [
   {
     name: 'tebra_search_patients',
     description:
-      'Search for patients in Tebra with flexible filters. Use query/fullName for name search, or combine specific filters like firstName, lastName, DOB, MRN, insurance, etc. Returns demographics and insurance policies.',
+      'Search for patients in Tebra with flexible filters. Use query/fullName for name search, or combine specific filters like firstName, lastName, DOB range, insurance company, practice, etc. Returns demographics, MRN, contact info, and primary/secondary insurance. Note: MRN and external ID are not server-side filters — use tebra_get_patient for external ID lookup.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -39,7 +137,7 @@ export const patientTools = [
         },
         dateOfBirth: {
           type: 'string',
-          description: 'Exact date of birth (YYYY-MM-DD)',
+          description: 'Exact date of birth (YYYY-MM-DD); sent as a single-day DOB range',
         },
         fromDateOfBirth: {
           type: 'string',
@@ -51,16 +149,8 @@ export const patientTools = [
         },
         gender: {
           type: 'string',
-          enum: ['Male', 'Female', 'Other', 'Unknown'],
-          description: 'Filter by gender',
-        },
-        mrn: {
-          type: 'string',
-          description: 'Medical Record Number',
-        },
-        externalId: {
-          type: 'string',
-          description: 'External system ID',
+          enum: ['Male', 'Female', 'Unknown'],
+          description: 'Filter by gender (Tebra GenderCode: Male, Female, Unknown)',
         },
         isActive: {
           type: 'boolean',
@@ -72,11 +162,19 @@ export const patientTools = [
         },
         insuranceCompanyName: {
           type: 'string',
-          description: 'Insurance company name filter',
+          description: 'Primary insurance company name filter',
         },
         referringProviderName: {
           type: 'string',
-          description: 'Referring provider name filter',
+          description: 'Referring provider full name filter',
+        },
+        fromLastEncounterDate: {
+          type: 'string',
+          description: 'Last-encounter date range start (YYYY-MM-DD)',
+        },
+        toLastEncounterDate: {
+          type: 'string',
+          description: 'Last-encounter date range end (YYYY-MM-DD)',
         },
         fromLastModifiedDate: {
           type: 'string',
@@ -101,16 +199,24 @@ export const patientTools = [
   {
     name: 'tebra_get_patient',
     description:
-      'Get full patient record from Tebra by patient ID, including insurance policies, cases, and authorizations.',
+      'Get a full patient record from Tebra by patient ID, or by external system ID (optionally scoped to an external vendor). Includes demographics, contact info, cases, insurance policies, and authorizations.',
     inputSchema: {
       type: 'object' as const,
       properties: {
         patientId: {
           type: 'string',
-          description: 'Tebra patient ID',
+          description: 'Tebra patient ID (numeric)',
+        },
+        externalId: {
+          type: 'string',
+          description: 'External system ID (alternative to patientId)',
+        },
+        externalVendorId: {
+          type: 'string',
+          description: 'Optional external vendor ID to scope the externalId lookup',
         },
       },
-      required: ['patientId'],
+      required: [],
     },
   },
 ];
@@ -124,55 +230,15 @@ export async function handlePatientTool(
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   switch (name) {
     case 'tebra_search_patients': {
-      // Map of arg names to SOAP filter field names
-      const filterMap: Array<[string, string]> = [
-        ['firstName', 'FirstName'],
-        ['lastName', 'LastName'],
-        ['fullName', 'FullName'],
-        ['query', 'PatientFullName'],       // backward compat
-        ['dateOfBirth', 'DateofBirth'],
-        ['fromDateOfBirth', 'FromDateofBirth'],
-        ['toDateOfBirth', 'ToDateofBirth'],
-        ['gender', 'Gender'],
-        ['mrn', 'MRN'],
-        ['externalId', 'ExternalID'],
-        ['practiceName', 'PracticeName'],
-        ['insuranceCompanyName', 'InsuranceCompanyName'],
-        ['referringProviderName', 'ReferringProviderFullName'],
-        ['fromLastModifiedDate', 'FromLastModifiedDate'],
-        ['toLastModifiedDate', 'ToLastModifiedDate'],
-        ['fromCreatedDate', 'FromCreatedDate'],
-        ['toCreatedDate', 'ToCreatedDate'],
-      ];
+      const hasAnyFilter = PATIENT_FILTER_SEQUENCE.some(
+        ([key]) => args[key] !== undefined && args[key] !== null && args[key] !== ''
+      ) || args.query || args.dateOfBirth;
 
-      const filterFields: string[] = [];
-      for (const [argKey, soapField] of filterMap) {
-        const val = args[argKey];
-        if (val !== undefined && val !== null && val !== '') {
-          filterFields.push(`<kar:${soapField}>${escapeXml(String(val))}</kar:${soapField}>`);
-        }
+      if (!hasAnyFilter) {
+        throw new Error('At least one search filter is required (e.g. query, firstName, lastName, dateOfBirth). For a full patient list use tebra_get_all_patients.');
       }
 
-      // Handle boolean isActive -> Active (true/false string)
-      if (args.isActive !== undefined && args.isActive !== null) {
-        const activeVal = args.isActive ? 'true' : 'false';
-        filterFields.push(`<kar:Active>${activeVal}</kar:Active>`);
-      }
-
-      if (filterFields.length === 0) {
-        return {
-          content: [{ type: 'text', text: 'At least one search filter is required (e.g. query, firstName, lastName, mrn, dateOfBirth).' }],
-        };
-      }
-
-      const bodyXml = `
-        <kar:request>
-          <kar:Fields>
-            ${filterFields.join('\n            ')}
-          </kar:Fields>
-          <kar:Filter />
-        </kar:request>`;
-
+      const bodyXml = buildSearchPatientsBody(args);
       const xml = await soapRequest(config, 'GetPatients', bodyXml);
       const patients = parsePatientList(xml);
 
@@ -189,27 +255,14 @@ export async function handlePatientTool(
     }
 
     case 'tebra_get_patient': {
-      const patientId = String(args.patientId ?? '');
-      if (!patientId) {
-        return {
-          content: [{ type: 'text', text: 'patientId is required.' }],
-        };
-      }
-
-      const bodyXml = `
-        <kar:request>
-          <kar:Fields>
-            <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
-          </kar:Fields>
-          <kar:Filter />
-        </kar:request>`;
-
+      const bodyXml = buildGetPatientBody(args);
       const xml = await soapRequest(config, 'GetPatient', bodyXml);
       const patientBlock = extractTag(xml, 'Patient');
 
-      if (!patientBlock) {
+      if (!patientBlock || !extractTag(patientBlock, 'ID')) {
+        const requested = args.patientId ?? args.externalId;
         return {
-          content: [{ type: 'text', text: `Patient not found: ${patientId}` }],
+          content: [{ type: 'text', text: `Patient not found: ${String(requested)}. If you don't have a Tebra patient ID, use tebra_search_patients with a name or DOB first.` }],
         };
       }
 
@@ -226,77 +279,142 @@ export async function handlePatientTool(
   }
 }
 
-// ─── Parsers ────────────────────────────────────────────────────
+// ─── Parsers (exported for reuse by authorizations/eligibility) ──
 
-interface PatientResult {
+export interface PatientResult {
   patientId: string;
   firstName: string;
   lastName: string;
   dateOfBirth: string;
+  gender: string;
   mrn: string;
-  insurances: Array<{
-    payerName: string;
-    memberId: string;
-    isPrimary: boolean;
-  }>;
-  authorizations: Array<{
-    authNumber: string;
-    insurancePlan: string;
-    status: string;
-    approvedVisits: number;
-    usedVisits: number;
-    remainingVisits: number;
-    startDate: string;
-    endDate: string;
+  active: string;
+  mobilePhone: string;
+  homePhone: string;
+  email: string;
+  address: string;
+  city: string;
+  state: string;
+  zipCode: string;
+  practiceName: string;
+  primaryInsurance: { companyName: string; planName: string };
+  secondaryInsurance: { companyName: string; planName: string };
+  cases: Array<{
+    caseId: string;
+    caseName: string;
+    payerScenario: string;
+    isPrimaryCase: string;
+    policies: Array<{
+      companyName: string;
+      planName: string;
+      policyNumber: string;
+      groupNumber: string;
+      copay: string;
+      deductible: string;
+      effectiveStartDate: string;
+      effectiveEndDate: string;
+      authorizations: Array<{
+        authNumber: string;
+        approvedVisits: number;
+        usedVisits: number;
+        remainingVisits: number;
+        startDate: string;
+        endDate: string;
+        status: string;
+        contactFullName: string;
+        contactPhone: string;
+        notes: string;
+      }>;
+    }>;
   }>;
 }
 
 function parsePatientList(xml: string): PatientResult[] {
   const blocks = extractAllTags(xml, 'PatientData');
-  return blocks.map(parsePatientBlock);
+  // Drop the phantom placeholder block Tebra emits on empty result sets.
+  return blocks.map(parsePatientBlock).filter((p) => p.patientId !== '');
 }
 
-function parsePatientBlock(block: string): PatientResult {
-  const insuranceBlocks = extractAllTags(block, 'InsurancePolicyData');
-  const caseBlocks = extractAllTags(block, 'CaseData');
-
-  const authorizations: PatientResult['authorizations'] = [];
-  for (const caseBlock of caseBlocks) {
-    const authBlocks = extractAllTags(caseBlock, 'AuthorizationData');
-    for (const authBlock of authBlocks) {
-      const approved = extractNumber(authBlock, 'ApprovedVisits');
-      const used = extractNumber(authBlock, 'UsedVisits');
-      authorizations.push({
-        authNumber: extractTag(authBlock, 'AuthorizationNumber'),
-        insurancePlan: extractTag(authBlock, 'InsurancePlanName'),
-        status: computeAuthStatus(authBlock, approved, used),
-        approvedVisits: approved,
-        usedVisits: used,
-        remainingVisits: Math.max(0, approved - used),
-        startDate: extractTag(authBlock, 'StartDate'),
-        endDate: extractTag(authBlock, 'EndDate'),
-      });
-    }
-  }
-
+export function parsePatientBlock(block: string): PatientResult {
   return {
-    patientId: extractTag(block, 'PatientID') || extractTag(block, 'ID'),
+    patientId: extractTag(block, 'ID'),
     firstName: extractTag(block, 'FirstName'),
     lastName: extractTag(block, 'LastName'),
-    dateOfBirth: extractTag(block, 'DateofBirth') || extractTag(block, 'DOB'),
-    mrn: extractTag(block, 'MRN'),
-    insurances: insuranceBlocks.map((ins) => ({
-      payerName: extractTag(ins, 'PayerName') || extractTag(ins, 'CompanyName'),
-      memberId: extractTag(ins, 'MemberNumber') || extractTag(ins, 'PolicyNumber'),
-      isPrimary: (extractNumber(ins, 'SequenceNumber') || 1) === 1,
+    dateOfBirth: extractTag(block, 'DOB'),
+    gender: extractTag(block, 'Gender'),
+    mrn: extractTag(block, 'MedicalRecordNumber'),
+    active: extractTag(block, 'Active'),
+    mobilePhone: extractTag(block, 'MobilePhone'),
+    homePhone: extractTag(block, 'HomePhone'),
+    email: extractTag(block, 'EmailAddress'),
+    address: extractTag(block, 'AddressLine1'),
+    city: extractTag(block, 'City'),
+    state: extractTag(block, 'State'),
+    zipCode: extractTag(block, 'ZipCode'),
+    practiceName: extractTag(block, 'PracticeName'),
+    primaryInsurance: {
+      companyName: extractTag(block, 'PrimaryInsurancePolicyCompanyName'),
+      planName: extractTag(block, 'PrimaryInsurancePolicyPlanName'),
+    },
+    secondaryInsurance: {
+      companyName: extractTag(block, 'SecondaryInsurancePolicyCompanyName'),
+      planName: extractTag(block, 'SecondaryInsurancePolicyPlanName'),
+    },
+    cases: parseCases(block),
+  };
+}
+
+export function parseCases(patientBlock: string): PatientResult['cases'] {
+  return extractAllTags(patientBlock, 'PatientCaseData').map((caseBlock) => ({
+    caseId: extractTag(caseBlock, 'PatientCaseID'),
+    caseName: extractTag(caseBlock, 'Name'),
+    payerScenario: extractTag(caseBlock, 'PayerScenario'),
+    isPrimaryCase: extractTag(caseBlock, 'IsPrimaryCase'),
+    policies: extractAllTags(caseBlock, 'PatientInsurancePolicyData').map((policy) => ({
+      companyName: extractTag(policy, 'CompanyName'),
+      planName: extractTag(policy, 'PlanName'),
+      policyNumber: extractTag(policy, 'Number'),
+      groupNumber: extractTag(policy, 'GroupNumber'),
+      copay: extractTag(policy, 'Copay'),
+      deductible: extractTag(policy, 'Deductible'),
+      effectiveStartDate: extractTag(policy, 'EffectiveStartDate'),
+      effectiveEndDate: extractTag(policy, 'EffectiveEndDate'),
+      authorizations: extractAllTags(policy, 'PatientInsurancePolicyAuthorizationData').map(parseAuthorizationBlock),
     })),
-    authorizations,
+  }));
+}
+
+export function parseAuthorizationBlock(authBlock: string): {
+  authNumber: string;
+  approvedVisits: number;
+  usedVisits: number;
+  remainingVisits: number;
+  startDate: string;
+  endDate: string;
+  status: string;
+  contactFullName: string;
+  contactPhone: string;
+  notes: string;
+} {
+  const approved = extractNumber(authBlock, 'AuthorizedNumberOfVisits');
+  const used = extractNumber(authBlock, 'AuthorizedNumberOfVisitsUsed');
+  return {
+    authNumber: extractTag(authBlock, 'AuthorizationNumber'),
+    approvedVisits: approved,
+    usedVisits: used,
+    remainingVisits: Math.max(0, approved - used),
+    startDate: extractTag(authBlock, 'StartDate'),
+    endDate: extractTag(authBlock, 'EndDate'),
+    status: computeAuthStatus(authBlock, approved, used),
+    contactFullName: extractTag(authBlock, 'ContactFullName'),
+    contactPhone: extractTag(authBlock, 'ContactPhone'),
+    notes: extractTag(authBlock, 'Notes'),
   };
 }
 
 function computeAuthStatus(block: string, approved: number, used: number): string {
   const remaining = approved - used;
-  if (remaining <= 0) return 'exhausted';
+  if (approved > 0 && remaining <= 0) return 'exhausted';
   const endDate = extractTag(block, 'EndDate');
   if (endDate && new Date(endDate) < new Date()) return 'expired';
   const authNumber = extractTag(block, 'AuthorizationNumber');

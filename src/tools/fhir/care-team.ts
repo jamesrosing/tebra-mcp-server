@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   codeDisplay,
   refDisplay,
@@ -23,6 +21,11 @@ export const fhirCareTeamTools = [
         patientId: {
           type: 'string',
           description: 'Tebra FHIR patient ID',
+        },
+        status: {
+          type: 'string',
+          enum: ['proposed', 'active', 'suspended', 'inactive', 'entered-in-error'],
+          description: "Care team status (Tebra requires this search param; default 'active')",
         },
       },
       required: ['patientId'],
@@ -48,11 +51,14 @@ export async function handleFhirCareTeamTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const data = await fhirRequest(config, 'CareTeam', { patient: patientId });
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'care team records', summarize);
+  // Tebra requires the status param alongside patient — omitting it returns
+  // a silent empty bundle (FHIR API User Guide, search parameter tables).
+  const { resources, truncated } = await searchFhir('CareTeam', {
+    patient: patientId,
+    status: args.status ? String(args.status) : 'active',
+  });
+  return formatFhirResult(resources, 'care team records', summarize, truncated);
 }

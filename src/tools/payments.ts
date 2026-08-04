@@ -1,9 +1,85 @@
 /**
  * Tebra MCP tools: Payment retrieval and creation.
+ *
+ * GetPayments follows the standard list-GET shape (empty Fields + Filter in
+ * WSDL PaymentFilter sequence order — see filter-helpers.ts).
+ *
+ * CreatePayment uses the WSDL PaymentCreate shape: nested Patient / Payment /
+ * Appointment / Practice groups in sequence order (AjudicationDate,
+ * Appointment, BatchNumber, Insurance, Other, Patient, PayerType, Payment,
+ * PostDate, Practice). The amount and method live inside the nested
+ * <Payment> group (AmountPaid → PaymentMethod → ReferenceNumber).
  */
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
+import {
+  buildListGetBody,
+  rejectUnsupportedFilterArg,
+  type FilterSequence,
+} from './filter-helpers.js';
+
+// ─── WSDL Sequence Table (source of truth: ?xsd=xsd0 PaymentFilter) ──
+
+const PAYMENT_FILTER_SEQUENCE: FilterSequence = [
+  ['amount', 'Amount'],
+  ['appointmentId', 'AppointmentID'],
+  ['batchNumber', 'BatchNumber'],
+  ['fromCreatedDate', 'FromCreatedDate'],
+  ['fromLastModifiedDate', 'FromLastModifiedDate'],
+  ['fromPostDate', 'FromPostDate'],
+  ['paymentId', 'ID'],
+  ['payerName', 'PayerName'],
+  ['payerType', 'PayerType'],
+  ['practiceName', 'PracticeName'],
+  ['referenceNumber', 'ReferenceNumber'],
+  ['toCreatedDate', 'ToCreatedDate'],
+  ['toLastModifiedDate', 'ToLastModifiedDate'],
+  ['toPostDate', 'ToPostDate'],
+];
+
+// ─── Request Body Builders (exported for tests) ─────────────────
+
+export function buildGetPaymentsBody(args: Record<string, unknown>): string {
+  rejectUnsupportedFilterArg(
+    args, 'patientId', 'tebra_get_payments',
+    'is not a PaymentFilter member in the Tebra WSDL; filter by payerName, ' +
+    'appointmentId, or a post-date range, or use tebra_get_transactions for patient-level activity.'
+  );
+  return buildListGetBody(PAYMENT_FILTER_SEQUENCE, args);
+}
+
+export function buildCreatePaymentBody(args: Record<string, unknown>): string {
+  const patientId = String(args.patientId ?? '');
+  const amount = args.amount != null ? Number(args.amount) : NaN;
+  const paymentMethod = String(args.paymentMethod ?? '');
+
+  const paymentDate = args.paymentDate ? String(args.paymentDate) : undefined;
+  const referenceNumber = args.referenceNumber ? String(args.referenceNumber) : undefined;
+  const appointmentId = args.appointmentId ? String(args.appointmentId) : undefined;
+  const batchNumber = args.batchNumber ? String(args.batchNumber) : undefined;
+  const practiceName = args.practiceName ? String(args.practiceName) : undefined;
+  const payerType = args.payerType ? String(args.payerType) : 'Patient';
+
+  // PaymentCreate WSDL sequence: AjudicationDate, Appointment, BatchNumber,
+  // Insurance, Other, Patient, PayerType, Payment, PostDate, Practice.
+  return `
+        <kar:request>
+          ${appointmentId ? `<kar:Appointment><kar:AppointmentID>${escapeXml(appointmentId)}</kar:AppointmentID></kar:Appointment>` : ''}
+          ${batchNumber ? `<kar:BatchNumber>${escapeXml(batchNumber)}</kar:BatchNumber>` : ''}
+          <kar:Patient>
+            <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
+          </kar:Patient>
+          <kar:PayerType>${escapeXml(payerType)}</kar:PayerType>
+          <kar:Payment>
+            <kar:AmountPaid>${amount}</kar:AmountPaid>
+            <kar:PaymentMethod>${escapeXml(paymentMethod)}</kar:PaymentMethod>
+            ${referenceNumber ? `<kar:ReferenceNumber>${escapeXml(referenceNumber)}</kar:ReferenceNumber>` : ''}
+          </kar:Payment>
+          ${paymentDate ? `<kar:PostDate>${escapeXml(paymentDate)}</kar:PostDate>` : ''}
+          ${practiceName ? `<kar:Practice><kar:PracticeName>${escapeXml(practiceName)}</kar:PracticeName></kar:Practice>` : ''}
+        </kar:request>`;
+}
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -11,7 +87,7 @@ export const paymentTools = [
   {
     name: 'tebra_get_payments',
     description:
-      'Get payments from Tebra with optional date range and patient filters. Returns payment details with amounts, methods, and payer info.',
+      'Get payments from Tebra with optional post-date range, payer, batch, appointment, and reference-number filters. Returns payment details with amounts, methods, and payer info. Note: the Tebra WSDL has no patient ID filter for payments.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -23,13 +99,13 @@ export const paymentTools = [
           type: 'string',
           description: 'Optional end post date filter (ISO 8601)',
         },
-        patientId: {
-          type: 'string',
-          description: 'Optional Tebra patient ID filter',
-        },
         payerName: {
           type: 'string',
           description: 'Optional payer name filter',
+        },
+        payerType: {
+          type: 'string',
+          description: 'Optional payer type filter (e.g. Patient, Insurance)',
         },
         batchNumber: {
           type: 'string',
@@ -38,6 +114,30 @@ export const paymentTools = [
         referenceNumber: {
           type: 'string',
           description: 'Optional reference/check number filter',
+        },
+        appointmentId: {
+          type: 'string',
+          description: 'Optional appointment ID filter',
+        },
+        paymentId: {
+          type: 'string',
+          description: 'Optional payment ID lookup',
+        },
+        amount: {
+          type: 'string',
+          description: 'Optional exact amount filter',
+        },
+        practiceName: {
+          type: 'string',
+          description: 'Optional practice name filter',
+        },
+        fromCreatedDate: {
+          type: 'string',
+          description: 'Optional start created date filter (ISO 8601)',
+        },
+        toCreatedDate: {
+          type: 'string',
+          description: 'Optional end created date filter (ISO 8601)',
         },
         fromLastModifiedDate: {
           type: 'string',
@@ -54,7 +154,7 @@ export const paymentTools = [
   {
     name: 'tebra_create_payment',
     description:
-      'Create a new payment in Tebra for a patient. Supports Cash, Check, CreditCard, ElectronicFundsTransfer, and Other payment methods.',
+      'Create a new patient payment in Tebra. Supports Cash, Check, CreditCard, ElectronicFundsTransfer, and Other payment methods. Optionally link to an appointment and practice.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -73,15 +173,11 @@ export const paymentTools = [
         },
         paymentDate: {
           type: 'string',
-          description: 'Optional payment date (ISO 8601, defaults to today)',
+          description: 'Optional payment post date (ISO 8601, defaults to today server-side)',
         },
         referenceNumber: {
           type: 'string',
           description: 'Optional reference or check number',
-        },
-        notes: {
-          type: 'string',
-          description: 'Optional payment notes',
         },
         appointmentId: {
           type: 'string',
@@ -90,6 +186,14 @@ export const paymentTools = [
         batchNumber: {
           type: 'string',
           description: 'Optional batch number',
+        },
+        practiceName: {
+          type: 'string',
+          description: 'Optional practice name (recommended for multi-practice accounts)',
+        },
+        payerType: {
+          type: 'string',
+          description: "Optional payer type (defaults to 'Patient')",
         },
       },
       required: ['patientId', 'amount', 'paymentMethod'],
@@ -106,54 +210,30 @@ export async function handlePaymentTool(
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   switch (name) {
     case 'tebra_get_payments': {
-      const fromPostDate = args.fromPostDate ? String(args.fromPostDate) : undefined;
-      const toPostDate = args.toPostDate ? String(args.toPostDate) : undefined;
-      const patientId = args.patientId ? String(args.patientId) : undefined;
-      const payerName = args.payerName ? String(args.payerName) : undefined;
-      const batchNumber = args.batchNumber ? String(args.batchNumber) : undefined;
-      const referenceNumber = args.referenceNumber ? String(args.referenceNumber) : undefined;
-      const fromLastModifiedDate = args.fromLastModifiedDate ? String(args.fromLastModifiedDate) : undefined;
-      const toLastModifiedDate = args.toLastModifiedDate ? String(args.toLastModifiedDate) : undefined;
-
-      const fieldsXml = [
-        fromPostDate ? `<kar:FromPostDate>${escapeXml(fromPostDate)}</kar:FromPostDate>` : '',
-        toPostDate ? `<kar:ToPostDate>${escapeXml(toPostDate)}</kar:ToPostDate>` : '',
-        patientId ? `<kar:PatientID>${escapeXml(patientId)}</kar:PatientID>` : '',
-        payerName ? `<kar:PayerName>${escapeXml(payerName)}</kar:PayerName>` : '',
-        batchNumber ? `<kar:BatchNumber>${escapeXml(batchNumber)}</kar:BatchNumber>` : '',
-        referenceNumber ? `<kar:ReferenceNumber>${escapeXml(referenceNumber)}</kar:ReferenceNumber>` : '',
-        fromLastModifiedDate ? `<kar:FromLastModifiedDate>${escapeXml(fromLastModifiedDate)}</kar:FromLastModifiedDate>` : '',
-        toLastModifiedDate ? `<kar:ToLastModifiedDate>${escapeXml(toLastModifiedDate)}</kar:ToLastModifiedDate>` : '',
-      ]
-        .filter(Boolean)
-        .join('\n        ');
-
-      const bodyXml = `
-        <kar:request>
-          <kar:Fields>
-            ${fieldsXml}
-          </kar:Fields>
-          <kar:Filter />
-        </kar:request>`;
-
+      const bodyXml = buildGetPaymentsBody(args);
       const xml = await soapRequest(config, 'GetPayments', bodyXml);
       const blocks = extractAllTags(xml, 'PaymentData');
 
-      const payments = blocks.map((block) => ({
-        paymentId: extractTag(block, 'ID'),
-        amount: extractTag(block, 'Amount'),
-        applied: extractTag(block, 'Applied'),
-        unapplied: extractTag(block, 'Unapplied'),
-        adjustments: extractTag(block, 'Adjustments'),
-        refunds: extractTag(block, 'Refunds'),
-        payerType: extractTag(block, 'PayerType'),
-        payerName: extractTag(block, 'PayerName'),
-        paymentMethod: extractTag(block, 'PaymentMethod'),
-        referenceNumber: extractTag(block, 'ReferenceNumber'),
-        postDate: extractTag(block, 'PostDate'),
-        batchNumber: extractTag(block, 'BatchNumber'),
-        appointmentId: extractTag(block, 'AppointmentID'),
-      }));
+      const payments = blocks
+        .map((block) => ({
+          paymentId: extractTag(block, 'ID'),
+          amount: extractTag(block, 'Amount'),
+          applied: extractTag(block, 'Applied'),
+          unapplied: extractTag(block, 'Unapplied'),
+          adjustments: extractTag(block, 'Adjustments'),
+          refunds: extractTag(block, 'Refunds'),
+          payerType: extractTag(block, 'PayerType'),
+          payerName: extractTag(block, 'PayerName'),
+          paymentMethod: extractTag(block, 'PaymentMethod'),
+          category: extractTag(block, 'Category'),
+          referenceNumber: extractTag(block, 'ReferenceNumber'),
+          postDate: extractTag(block, 'PostDate'),
+          adjudicationDate: extractTag(block, 'AdjudicationDate'),
+          batchNumber: extractTag(block, 'BatchNumber'),
+          appointmentId: extractTag(block, 'AppointmentID'),
+        }))
+        // Drop the phantom placeholder block Tebra emits on empty result sets.
+        .filter((payment) => payment.paymentId !== '');
 
       if (payments.length === 0) {
         return {
@@ -172,42 +252,17 @@ export async function handlePaymentTool(
       const paymentMethod = String(args.paymentMethod ?? '');
 
       if (!patientId || isNaN(amount) || !paymentMethod) {
-        return {
-          content: [{ type: 'text', text: 'patientId, amount, and paymentMethod are required.' }],
-        };
+        throw new Error('patientId, amount, and paymentMethod are required.');
       }
 
       const validMethods = ['Cash', 'Check', 'CreditCard', 'ElectronicFundsTransfer', 'Other'];
       if (!validMethods.includes(paymentMethod)) {
-        return {
-          content: [{ type: 'text', text: `Invalid paymentMethod "${paymentMethod}". Must be one of: ${validMethods.join(', ')}` }],
-        };
+        throw new Error(`Invalid paymentMethod "${paymentMethod}". Must be one of: ${validMethods.join(', ')}`);
       }
 
-      const paymentDate = args.paymentDate ? String(args.paymentDate) : undefined;
-      const referenceNumber = args.referenceNumber ? String(args.referenceNumber) : undefined;
-      const notes = args.notes ? String(args.notes) : undefined;
-      const appointmentId = args.appointmentId ? String(args.appointmentId) : undefined;
-      const batchNumber = args.batchNumber ? String(args.batchNumber) : undefined;
-
-      const bodyXml = `
-        <kar:request>
-          <kar:Payment>
-            <kar:Patient>
-              <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
-            </kar:Patient>
-            <kar:AmountPaid>${amount}</kar:AmountPaid>
-            <kar:PaymentMethod>${escapeXml(paymentMethod)}</kar:PaymentMethod>
-            ${paymentDate ? `<kar:PostDate>${escapeXml(paymentDate)}</kar:PostDate>` : ''}
-            ${referenceNumber ? `<kar:ReferenceNumber>${escapeXml(referenceNumber)}</kar:ReferenceNumber>` : ''}
-            ${notes ? `<kar:Notes>${escapeXml(notes)}</kar:Notes>` : ''}
-            ${appointmentId ? `<kar:AppointmentID>${escapeXml(appointmentId)}</kar:AppointmentID>` : ''}
-            ${batchNumber ? `<kar:BatchNumber>${escapeXml(batchNumber)}</kar:BatchNumber>` : ''}
-          </kar:Payment>
-        </kar:request>`;
-
+      const bodyXml = buildCreatePaymentBody(args);
       const xml = await soapRequest(config, 'CreatePayment', bodyXml);
-      const paymentId = extractTag(xml, 'PaymentID') || extractTag(xml, 'ID');
+      const paymentId = extractTag(xml, 'PaymentID');
 
       return {
         content: [{

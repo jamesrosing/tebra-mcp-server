@@ -13,6 +13,14 @@ import type { TebraConfig } from './config.js';
 
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 1000;
+const REQUEST_TIMEOUT_MS = 30_000;
+
+/**
+ * Errors that retrying cannot fix: auth/permission failures, SOAP faults,
+ * and Tebra-reported validation errors. Thrown immediately instead of
+ * burning ~7s of backoff re-sending a request that will fail identically.
+ */
+export class NonRetryableError extends Error {}
 const SOAP_NAMESPACE = 'http://www.kareo.com/api/schemas/';
 // WCF service contract name. The SOAPAction header must be
 // `${SOAP_NAMESPACE}${SOAP_CONTRACT}/${operation}` — omitting the contract
@@ -42,8 +50,9 @@ const ENDPOINT_RATE_LIMITS: Record<string, number> = {
   CreateAppointment: 500,
   CreateEncounter: 500,
   CreatePatient: 500,
-  CreatePayments: 500,
+  CreatePayment: 500,
   UpdateAppointment: 500,
+  UpdateAppointmentStatus: 500,
   UpdateEncounterStatus: 500,
   UpdatePatient: 1000,
   DeleteAppointment: 500,
@@ -63,9 +72,11 @@ export function escapeXml(str: string): string {
     .replace(/'/g, '&apos;');
 }
 
+// Tag-name matching requires a boundary after the name (whitespace, '/', or
+// '>') so extractTag(xml, 'Patient') cannot match <PatientID> or <PatientData>.
 export function extractTag(xml: string, tagName: string): string {
   const pattern = new RegExp(
-    `<(?:[a-zA-Z0-9]+:)?${tagName}[^>]*>([\\s\\S]*?)</(?:[a-zA-Z0-9]+:)?${tagName}>`,
+    `<(?:[a-zA-Z0-9]+:)?${tagName}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[a-zA-Z0-9]+:)?${tagName}\\s*>`,
     'i'
   );
   const match = xml.match(pattern);
@@ -74,7 +85,7 @@ export function extractTag(xml: string, tagName: string): string {
 
 export function extractAllTags(xml: string, tagName: string): string[] {
   const pattern = new RegExp(
-    `<(?:[a-zA-Z0-9]+:)?${tagName}[^>]*>[\\s\\S]*?</(?:[a-zA-Z0-9]+:)?${tagName}>`,
+    `<(?:[a-zA-Z0-9]+:)?${tagName}(?:\\s[^>]*)?>[\\s\\S]*?</(?:[a-zA-Z0-9]+:)?${tagName}\\s*>`,
     'gi'
   );
   return xml.match(pattern) ?? [];
@@ -145,7 +156,7 @@ function checkSecurityResponse(responseXml: string, action: string): void {
 
   const authenticated = extractTag(securityBlock, 'Authenticated');
   if (authenticated && authenticated.toLowerCase() === 'false') {
-    throw new Error(
+    throw new NonRetryableError(
       `Tebra authentication failed for ${action}. Check TEBRA_SOAP_USER and TEBRA_SOAP_PASSWORD.`
     );
   }
@@ -153,7 +164,7 @@ function checkSecurityResponse(responseXml: string, action: string): void {
   const authorized = extractTag(securityBlock, 'Authorized');
   if (authorized && authorized.toLowerCase() === 'false') {
     const missing = extractTag(securityBlock, 'PermissionsMissing');
-    throw new Error(
+    throw new NonRetryableError(
       `Tebra authorization failed for ${action}. Missing permissions: ${missing || 'unknown'}. ` +
       'Contact your Tebra administrator to grant API permissions.'
     );
@@ -216,6 +227,7 @@ export async function soapRequest(
           SOAPAction: soapActionHeader,
         },
         body: envelope,
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
 
       const responseText = await response.text();
@@ -227,14 +239,17 @@ export async function soapRequest(
 
       if (!response.ok) {
         const faultString = extractTag(responseText, 'faultstring');
-        throw new Error(
-          `SOAP ${action} failed (HTTP ${response.status}): ${faultString || response.statusText}`
-        );
+        const message = `SOAP ${action} failed (HTTP ${response.status}): ${(faultString || response.statusText).slice(0, 500)}`;
+        // Only server-side transients are worth retrying; 4xx will fail identically.
+        if (response.status >= 500 || response.status === 429) {
+          throw new Error(message);
+        }
+        throw new NonRetryableError(message);
       }
 
       const faultString = extractTag(responseText, 'faultstring');
       if (faultString) {
-        throw new Error(`SOAP fault from ${action}: ${faultString}`);
+        throw new NonRetryableError(`SOAP fault from ${action}: ${faultString.slice(0, 500)}`);
       }
 
       const errorResponse = extractTag(responseText, 'ErrorResponse');
@@ -242,7 +257,7 @@ export async function soapRequest(
         const isError = extractTag(errorResponse, 'IsError');
         if (isError.toLowerCase() === 'true') {
           const errorMsg = extractTag(errorResponse, 'ErrorMessage');
-          throw new Error(`Tebra ${action} error: ${errorMsg || 'Unknown error'}`);
+          throw new NonRetryableError(`Tebra ${action} error: ${(errorMsg || 'Unknown error').slice(0, 500)}`);
         }
       }
 
@@ -251,6 +266,7 @@ export async function soapRequest(
 
       return responseText;
     } catch (error) {
+      if (error instanceof NonRetryableError) throw error;
       lastError = error instanceof Error ? error : new Error(String(error));
 
       if (attempt < MAX_RETRIES) {

@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   codeDisplay,
   type FhirResource,
@@ -52,11 +50,9 @@ export async function handleFhirAllergyTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const data = await fhirRequest(config, 'AllergyIntolerance', { patient: patientId });
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'allergies', summarize);
+  const { resources, truncated } = await searchFhir('AllergyIntolerance', { patient: patientId });
+  return formatFhirResult(resources, 'allergies', summarize, truncated);
 }

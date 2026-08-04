@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   codeDisplay,
   codeValue,
@@ -55,14 +53,12 @@ export async function handleFhirConditionTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const params: Record<string, string> = { patient: patientId };
+  const params: Record<string, string | string[]> = { patient: patientId };
   if (args.clinicalStatus) params['clinical-status'] = String(args.clinicalStatus);
 
-  const data = await fhirRequest(config, 'Condition', params);
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'conditions', summarize);
+  const { resources, truncated } = await searchFhir('Condition', params);
+  return formatFhirResult(resources, 'conditions', summarize, truncated);
 }

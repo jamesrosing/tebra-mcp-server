@@ -1,11 +1,18 @@
 /**
  * Tebra MCP tools: Patient create and update.
+ *
+ * PatientCreate/PatientUpdate are flat WSDL types whose members must be
+ * emitted in <xs:sequence> order — WCF's DataContractSerializer silently
+ * drops out-of-order members (the pre-0.4.0 build sent FirstName first,
+ * which caused everything alphabetically before it — address, city, DOB —
+ * to be dropped server-side). Key member names differ from the obvious:
+ * SocialSecurityNumber (not SSN), PatientExternalID (not ExternalID),
+ * MedicalRecordNumber. Insurance policies ride inside Cases → Policies,
+ * and the guarantor relationship member is RelationshiptoGuarantor.
  */
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag } from '../soap-client.js';
-
-// ─── Tool Definitions ───────────────────────────────────────────
 
 interface InsuranceInput {
   companyName: string;
@@ -20,11 +27,124 @@ interface GuarantorInput {
   relationship?: string;
 }
 
+const GUARANTOR_RELATIONSHIPS = ['Child', 'Other', 'Self', 'Spouse'];
+
+// ─── Request Body Builders (exported for tests) ─────────────────
+
+export function buildCreatePatientBody(args: Record<string, unknown>): string {
+  const str = (key: string): string => (args[key] ? String(args[key]) : '');
+  const primaryInsurance = args.primaryInsurance as InsuranceInput | undefined;
+  const guarantor = args.guarantor as GuarantorInput | undefined;
+
+  // Insurance policies must ride inside a patient case (Cases → Policies).
+  let casesXml = '';
+  if (primaryInsurance) {
+    // InsurancePolicyCreateReq sequence: ..., CompanyName, ..., PlanName,
+    // PolicyGroupNumber, ..., PolicyNumber, Precedence, ...
+    casesXml = `
+            <kar:Cases>
+              <kar:PatientCaseCreateReq>
+                <kar:Active>true</kar:Active>
+                <kar:CaseName>Default Case</kar:CaseName>
+                <kar:PayerScenario>Insurance</kar:PayerScenario>
+                <kar:Policies>
+                  <kar:InsurancePolicyCreateReq>
+                    <kar:Active>true</kar:Active>
+                    <kar:CompanyName>${escapeXml(primaryInsurance.companyName)}</kar:CompanyName>
+                    ${primaryInsurance.planName ? `<kar:PlanName>${escapeXml(primaryInsurance.planName)}</kar:PlanName>` : ''}
+                    ${primaryInsurance.groupNumber ? `<kar:PolicyGroupNumber>${escapeXml(primaryInsurance.groupNumber)}</kar:PolicyGroupNumber>` : ''}
+                    <kar:PolicyNumber>${escapeXml(primaryInsurance.memberId)}</kar:PolicyNumber>
+                    <kar:Precedence>1</kar:Precedence>
+                  </kar:InsurancePolicyCreateReq>
+                </kar:Policies>
+              </kar:PatientCaseCreateReq>
+            </kar:Cases>`;
+  }
+
+  let guarantorXml = '';
+  if (guarantor) {
+    const relationship = guarantor.relationship && GUARANTOR_RELATIONSHIPS.includes(guarantor.relationship)
+      ? guarantor.relationship
+      : 'Other';
+    // PatientGuarantorReq sequence: ..., DifferentThanPatient, FirstName,
+    // LastName, ..., RelationshiptoGuarantor, ...
+    guarantorXml = `
+            <kar:Guarantor>
+              <kar:DifferentThanPatient>true</kar:DifferentThanPatient>
+              <kar:FirstName>${escapeXml(guarantor.firstName)}</kar:FirstName>
+              <kar:LastName>${escapeXml(guarantor.lastName)}</kar:LastName>
+              <kar:RelationshiptoGuarantor>${escapeXml(relationship)}</kar:RelationshiptoGuarantor>
+            </kar:Guarantor>`;
+  }
+
+  const practiceId = str('practiceId');
+  const practiceName = str('practiceName');
+  const practiceXml = practiceId || practiceName
+    ? `<kar:Practice>
+              ${practiceId ? `<kar:PracticeID>${escapeXml(practiceId)}</kar:PracticeID>` : ''}
+              ${practiceName ? `<kar:PracticeName>${escapeXml(practiceName)}</kar:PracticeName>` : ''}
+            </kar:Practice>`
+    : '';
+
+  // PatientCreate WSDL sequence order (members we emit).
+  return `
+        <kar:request>
+          <kar:Patient>
+            ${str('address1') ? `<kar:AddressLine1>${escapeXml(str('address1'))}</kar:AddressLine1>` : ''}
+            ${str('address2') ? `<kar:AddressLine2>${escapeXml(str('address2'))}</kar:AddressLine2>` : ''}
+            ${casesXml}
+            ${str('city') ? `<kar:City>${escapeXml(str('city'))}</kar:City>` : ''}
+            <kar:DateofBirth>${escapeXml(str('dateOfBirth'))}</kar:DateofBirth>
+            ${str('email') ? `<kar:EmailAddress>${escapeXml(str('email'))}</kar:EmailAddress>` : ''}
+            <kar:FirstName>${escapeXml(str('firstName'))}</kar:FirstName>
+            ${str('gender') ? `<kar:Gender>${escapeXml(str('gender'))}</kar:Gender>` : ''}
+            ${guarantorXml}
+            ${str('homePhone') ? `<kar:HomePhone>${escapeXml(str('homePhone'))}</kar:HomePhone>` : ''}
+            <kar:LastName>${escapeXml(str('lastName'))}</kar:LastName>
+            ${str('mrn') ? `<kar:MedicalRecordNumber>${escapeXml(str('mrn'))}</kar:MedicalRecordNumber>` : ''}
+            ${str('mobilePhone') ? `<kar:MobilePhone>${escapeXml(str('mobilePhone'))}</kar:MobilePhone>` : ''}
+            ${str('externalId') ? `<kar:PatientExternalID>${escapeXml(str('externalId'))}</kar:PatientExternalID>` : ''}
+            ${practiceXml}
+            ${str('referralSource') ? `<kar:ReferralSource>${escapeXml(str('referralSource'))}</kar:ReferralSource>` : ''}
+            ${str('ssn') ? `<kar:SocialSecurityNumber>${escapeXml(str('ssn'))}</kar:SocialSecurityNumber>` : ''}
+            ${str('state') ? `<kar:State>${escapeXml(str('state'))}</kar:State>` : ''}
+            ${str('zipCode') ? `<kar:ZipCode>${escapeXml(str('zipCode'))}</kar:ZipCode>` : ''}
+          </kar:Patient>
+        </kar:request>`;
+}
+
+export function buildUpdatePatientBody(args: Record<string, unknown>): string {
+  const str = (key: string): string => (args[key] ? String(args[key]) : '');
+
+  // PatientUpdate WSDL sequence order (members we emit). PatientID sits
+  // between PatientExternalID and Practice in the sequence.
+  return `
+        <kar:request>
+          <kar:Patient>
+            ${str('address1') ? `<kar:AddressLine1>${escapeXml(str('address1'))}</kar:AddressLine1>` : ''}
+            ${str('address2') ? `<kar:AddressLine2>${escapeXml(str('address2'))}</kar:AddressLine2>` : ''}
+            ${str('city') ? `<kar:City>${escapeXml(str('city'))}</kar:City>` : ''}
+            ${str('dateOfBirth') ? `<kar:DateofBirth>${escapeXml(str('dateOfBirth'))}</kar:DateofBirth>` : ''}
+            ${str('email') ? `<kar:EmailAddress>${escapeXml(str('email'))}</kar:EmailAddress>` : ''}
+            ${str('firstName') ? `<kar:FirstName>${escapeXml(str('firstName'))}</kar:FirstName>` : ''}
+            ${str('gender') ? `<kar:Gender>${escapeXml(str('gender'))}</kar:Gender>` : ''}
+            ${str('homePhone') ? `<kar:HomePhone>${escapeXml(str('homePhone'))}</kar:HomePhone>` : ''}
+            ${str('lastName') ? `<kar:LastName>${escapeXml(str('lastName'))}</kar:LastName>` : ''}
+            ${str('mobilePhone') ? `<kar:MobilePhone>${escapeXml(str('mobilePhone'))}</kar:MobilePhone>` : ''}
+            <kar:PatientID>${escapeXml(str('patientId'))}</kar:PatientID>
+            ${str('state') ? `<kar:State>${escapeXml(str('state'))}</kar:State>` : ''}
+            ${str('zipCode') ? `<kar:ZipCode>${escapeXml(str('zipCode'))}</kar:ZipCode>` : ''}
+          </kar:Patient>
+        </kar:request>`;
+}
+
+// ─── Tool Definitions ───────────────────────────────────────────
+
 export const patientCrudTools = [
   {
     name: 'tebra_create_patient',
     description:
-      'Create a new patient in Tebra with demographics, address, insurance, and guarantor information.',
+      'Create a new patient in Tebra with demographics, address, insurance, and guarantor information. practiceName or practiceId is strongly recommended — Tebra requires the practice on most accounts.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -40,9 +160,18 @@ export const patientCrudTools = [
           type: 'string',
           description: 'Date of birth (ISO 8601, e.g. 1990-01-15)',
         },
+        practiceName: {
+          type: 'string',
+          description: 'Practice name (strongly recommended; required by Tebra on most accounts)',
+        },
+        practiceId: {
+          type: 'string',
+          description: 'Practice ID (alternative to practiceName)',
+        },
         gender: {
           type: 'string',
-          description: 'Optional gender (Male, Female, Other)',
+          enum: ['Male', 'Female', 'Unknown'],
+          description: 'Optional gender (Tebra GenderCode: Male, Female, Unknown)',
         },
         email: {
           type: 'string',
@@ -76,9 +205,13 @@ export const patientCrudTools = [
           type: 'string',
           description: 'Optional ZIP code',
         },
+        mrn: {
+          type: 'string',
+          description: 'Optional medical record number',
+        },
         ssn: {
           type: 'string',
-          description: 'Optional SSN (will be transmitted securely)',
+          description: 'Optional SSN',
         },
         referralSource: {
           type: 'string',
@@ -86,10 +219,10 @@ export const patientCrudTools = [
         },
         primaryInsurance: {
           type: 'object',
-          description: 'Optional primary insurance information',
+          description: 'Optional primary insurance (created inside a default patient case)',
           properties: {
             companyName: { type: 'string', description: 'Insurance company name' },
-            memberId: { type: 'string', description: 'Member/subscriber ID' },
+            memberId: { type: 'string', description: 'Member/policy number' },
             groupNumber: { type: 'string', description: 'Optional group number' },
             planName: { type: 'string', description: 'Optional plan name' },
           },
@@ -101,7 +234,11 @@ export const patientCrudTools = [
           properties: {
             firstName: { type: 'string', description: 'Guarantor first name' },
             lastName: { type: 'string', description: 'Guarantor last name' },
-            relationship: { type: 'string', description: 'Optional relationship to patient' },
+            relationship: {
+              type: 'string',
+              enum: GUARANTOR_RELATIONSHIPS,
+              description: 'Patient relationship to guarantor (default Other)',
+            },
           },
           required: ['firstName', 'lastName'],
         },
@@ -138,6 +275,7 @@ export const patientCrudTools = [
         },
         gender: {
           type: 'string',
+          enum: ['Male', 'Female', 'Unknown'],
           description: 'Optional updated gender',
         },
         email: {
@@ -192,75 +330,12 @@ export async function handlePatientCrudTool(
       const dateOfBirth = String(args.dateOfBirth ?? '');
 
       if (!firstName || !lastName || !dateOfBirth) {
-        return {
-          content: [{ type: 'text', text: 'firstName, lastName, and dateOfBirth are required.' }],
-        };
+        throw new Error('firstName, lastName, and dateOfBirth are required.');
       }
 
-      const gender = args.gender ? String(args.gender) : undefined;
-      const email = args.email ? String(args.email) : undefined;
-      const homePhone = args.homePhone ? String(args.homePhone) : undefined;
-      const mobilePhone = args.mobilePhone ? String(args.mobilePhone) : undefined;
-      const address1 = args.address1 ? String(args.address1) : undefined;
-      const address2 = args.address2 ? String(args.address2) : undefined;
-      const city = args.city ? String(args.city) : undefined;
-      const state = args.state ? String(args.state) : undefined;
-      const zipCode = args.zipCode ? String(args.zipCode) : undefined;
-      const ssn = args.ssn ? String(args.ssn) : undefined;
-      const referralSource = args.referralSource ? String(args.referralSource) : undefined;
-      const externalId = args.externalId ? String(args.externalId) : undefined;
-      const primaryInsurance = args.primaryInsurance as InsuranceInput | undefined;
-      const guarantor = args.guarantor as GuarantorInput | undefined;
-
-      let insuranceXml = '';
-      if (primaryInsurance) {
-        insuranceXml = `
-            <kar:InsurancePolicies>
-              <kar:InsurancePolicyReq>
-                <kar:CompanyName>${escapeXml(primaryInsurance.companyName)}</kar:CompanyName>
-                <kar:MemberNumber>${escapeXml(primaryInsurance.memberId)}</kar:MemberNumber>
-                ${primaryInsurance.groupNumber ? `<kar:GroupNumber>${escapeXml(primaryInsurance.groupNumber)}</kar:GroupNumber>` : ''}
-                ${primaryInsurance.planName ? `<kar:PlanName>${escapeXml(primaryInsurance.planName)}</kar:PlanName>` : ''}
-                <kar:SequenceNumber>1</kar:SequenceNumber>
-              </kar:InsurancePolicyReq>
-            </kar:InsurancePolicies>`;
-      }
-
-      let guarantorXml = '';
-      if (guarantor) {
-        guarantorXml = `
-            <kar:Guarantor>
-              <kar:FirstName>${escapeXml(guarantor.firstName)}</kar:FirstName>
-              <kar:LastName>${escapeXml(guarantor.lastName)}</kar:LastName>
-              ${guarantor.relationship ? `<kar:Relationship>${escapeXml(guarantor.relationship)}</kar:Relationship>` : ''}
-            </kar:Guarantor>`;
-      }
-
-      const bodyXml = `
-        <kar:request>
-          <kar:Patient>
-            <kar:FirstName>${escapeXml(firstName)}</kar:FirstName>
-            <kar:LastName>${escapeXml(lastName)}</kar:LastName>
-            <kar:DateofBirth>${escapeXml(dateOfBirth)}</kar:DateofBirth>
-            ${gender ? `<kar:Gender>${escapeXml(gender)}</kar:Gender>` : ''}
-            ${email ? `<kar:EmailAddress>${escapeXml(email)}</kar:EmailAddress>` : ''}
-            ${homePhone ? `<kar:HomePhone>${escapeXml(homePhone)}</kar:HomePhone>` : ''}
-            ${mobilePhone ? `<kar:MobilePhone>${escapeXml(mobilePhone)}</kar:MobilePhone>` : ''}
-            ${address1 ? `<kar:AddressLine1>${escapeXml(address1)}</kar:AddressLine1>` : ''}
-            ${address2 ? `<kar:AddressLine2>${escapeXml(address2)}</kar:AddressLine2>` : ''}
-            ${city ? `<kar:City>${escapeXml(city)}</kar:City>` : ''}
-            ${state ? `<kar:State>${escapeXml(state)}</kar:State>` : ''}
-            ${zipCode ? `<kar:ZipCode>${escapeXml(zipCode)}</kar:ZipCode>` : ''}
-            ${ssn ? `<kar:SSN>${escapeXml(ssn)}</kar:SSN>` : ''}
-            ${referralSource ? `<kar:ReferralSource>${escapeXml(referralSource)}</kar:ReferralSource>` : ''}
-            ${externalId ? `<kar:ExternalID>${escapeXml(externalId)}</kar:ExternalID>` : ''}
-            ${insuranceXml}
-            ${guarantorXml}
-          </kar:Patient>
-        </kar:request>`;
-
+      const bodyXml = buildCreatePatientBody(args);
       const xml = await soapRequest(config, 'CreatePatient', bodyXml);
-      const patientId = extractTag(xml, 'PatientID') || extractTag(xml, 'ID');
+      const patientId = extractTag(xml, 'PatientID');
 
       return {
         content: [{
@@ -276,43 +351,12 @@ export async function handlePatientCrudTool(
     case 'tebra_update_patient': {
       const patientId = String(args.patientId ?? '');
       if (!patientId) {
-        return { content: [{ type: 'text', text: 'patientId is required.' }] };
+        throw new Error('patientId is required.');
       }
 
-      const firstName = args.firstName ? String(args.firstName) : undefined;
-      const lastName = args.lastName ? String(args.lastName) : undefined;
-      const dateOfBirth = args.dateOfBirth ? String(args.dateOfBirth) : undefined;
-      const gender = args.gender ? String(args.gender) : undefined;
-      const email = args.email ? String(args.email) : undefined;
-      const homePhone = args.homePhone ? String(args.homePhone) : undefined;
-      const mobilePhone = args.mobilePhone ? String(args.mobilePhone) : undefined;
-      const address1 = args.address1 ? String(args.address1) : undefined;
-      const address2 = args.address2 ? String(args.address2) : undefined;
-      const city = args.city ? String(args.city) : undefined;
-      const state = args.state ? String(args.state) : undefined;
-      const zipCode = args.zipCode ? String(args.zipCode) : undefined;
-
-      const bodyXml = `
-        <kar:request>
-          <kar:Patient>
-            <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
-            ${firstName ? `<kar:FirstName>${escapeXml(firstName)}</kar:FirstName>` : ''}
-            ${lastName ? `<kar:LastName>${escapeXml(lastName)}</kar:LastName>` : ''}
-            ${dateOfBirth ? `<kar:DateofBirth>${escapeXml(dateOfBirth)}</kar:DateofBirth>` : ''}
-            ${gender ? `<kar:Gender>${escapeXml(gender)}</kar:Gender>` : ''}
-            ${email ? `<kar:EmailAddress>${escapeXml(email)}</kar:EmailAddress>` : ''}
-            ${homePhone ? `<kar:HomePhone>${escapeXml(homePhone)}</kar:HomePhone>` : ''}
-            ${mobilePhone ? `<kar:MobilePhone>${escapeXml(mobilePhone)}</kar:MobilePhone>` : ''}
-            ${address1 ? `<kar:AddressLine1>${escapeXml(address1)}</kar:AddressLine1>` : ''}
-            ${address2 ? `<kar:AddressLine2>${escapeXml(address2)}</kar:AddressLine2>` : ''}
-            ${city ? `<kar:City>${escapeXml(city)}</kar:City>` : ''}
-            ${state ? `<kar:State>${escapeXml(state)}</kar:State>` : ''}
-            ${zipCode ? `<kar:ZipCode>${escapeXml(zipCode)}</kar:ZipCode>` : ''}
-          </kar:Patient>
-        </kar:request>`;
-
+      const bodyXml = buildUpdatePatientBody(args);
       const xml = await soapRequest(config, 'UpdatePatient', bodyXml);
-      const updatedId = extractTag(xml, 'PatientID') || extractTag(xml, 'ID') || patientId;
+      const updatedId = extractTag(xml, 'PatientID') || patientId;
 
       return {
         content: [{

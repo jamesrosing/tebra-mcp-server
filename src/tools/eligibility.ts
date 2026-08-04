@@ -3,17 +3,13 @@
  *
  * Note: Tebra SOAP API does not expose a direct real-time eligibility
  * endpoint. This tool approximates eligibility by checking the patient's
- * active insurance policies and authorization history.
+ * on-file insurance policies and authorization history via GetPatient
+ * (Filter-only request shape — see patients.ts).
  */
 
 import type { TebraConfig } from '../config.js';
-import {
-  soapRequest,
-  escapeXml,
-  extractTag,
-  extractAllTags,
-  extractNumber,
-} from '../soap-client.js';
+import { soapRequest, extractTag, extractAllTags } from '../soap-client.js';
+import { buildGetPatientBody } from './patients.js';
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -21,7 +17,7 @@ export const eligibilityTools = [
   {
     name: 'tebra_check_insurance_eligibility',
     description:
-      'Check insurance eligibility for a Tebra patient. Examines active insurance policies and authorization history. Note: this is an approximation based on on-file data, not a real-time payer eligibility check.',
+      'Check insurance eligibility for a Tebra patient. Examines on-file insurance policies and authorization history. Note: this is an approximation based on on-file data, not a real-time payer eligibility check.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -48,20 +44,14 @@ export async function handleEligibilityTool(
 
   const patientId = String(args.patientId ?? '');
   if (!patientId) {
-    return { content: [{ type: 'text', text: 'patientId is required.' }] };
+    throw new Error('patientId is required.');
   }
 
-  const bodyXml = `
-    <kar:request>
-      <kar:Fields>
-        <kar:PatientID>${escapeXml(patientId)}</kar:PatientID>
-      </kar:Fields>
-    </kar:request>`;
-
+  const bodyXml = buildGetPatientBody({ patientId });
   const xml = await soapRequest(config, 'GetPatient', bodyXml);
   const patientBlock = extractTag(xml, 'Patient');
 
-  if (!patientBlock) {
+  if (!patientBlock || !extractTag(patientBlock, 'ID')) {
     return {
       content: [
         {
@@ -80,39 +70,23 @@ export async function handleEligibilityTool(
     };
   }
 
-  const insuranceBlocks = extractAllTags(patientBlock, 'InsurancePolicyData');
-  const caseBlocks = extractAllTags(patientBlock, 'CaseData');
+  // Primary insurance from the flat PatientData projection.
+  const primaryCompany = extractTag(patientBlock, 'PrimaryInsurancePolicyCompanyName');
+  const primaryPlan = extractTag(patientBlock, 'PrimaryInsurancePolicyPlanName');
+  const primaryNumber = extractTag(patientBlock, 'PrimaryInsurancePolicyNumber');
 
-  // Find primary insurance
-  let primaryInsurance: { payerName: string; memberId: string } | null = null;
-  for (const ins of insuranceBlocks) {
-    const seq = extractNumber(ins, 'SequenceNumber');
-    if (seq === 1 || insuranceBlocks.length === 1) {
-      primaryInsurance = {
-        payerName: extractTag(ins, 'PayerName') || extractTag(ins, 'CompanyName'),
-        memberId: extractTag(ins, 'MemberNumber') || extractTag(ins, 'PolicyNumber'),
-      };
-      break;
-    }
-  }
-
-  // Check if any authorizations exist (indicates auth-required payer)
-  let hasActiveAuths = false;
-  for (const caseBlock of caseBlocks) {
-    const authBlocks = extractAllTags(caseBlock, 'AuthorizationData');
-    if (authBlocks.length > 0) {
-      hasActiveAuths = true;
-      break;
-    }
-  }
+  // Count policies and check for any authorizations across cases.
+  const policyBlocks = extractAllTags(patientBlock, 'PatientInsurancePolicyData');
+  const hasActiveAuths = extractAllTags(patientBlock, 'PatientInsurancePolicyAuthorizationData').length > 0;
 
   const result = {
-    eligible: !!primaryInsurance,
-    planName: primaryInsurance?.payerName ?? null,
-    memberId: primaryInsurance?.memberId ?? null,
+    eligible: !!primaryCompany,
+    payerName: primaryCompany || null,
+    planName: primaryPlan || null,
+    memberId: primaryNumber || null,
     authRequired: hasActiveAuths,
-    insurancePoliciesOnFile: insuranceBlocks.length,
-    note: primaryInsurance
+    insurancePoliciesOnFile: policyBlocks.length,
+    note: primaryCompany
       ? 'Eligibility based on on-file insurance data. Verify with payer for real-time status.'
       : 'No insurance policies on file. Patient may be self-pay.',
   };

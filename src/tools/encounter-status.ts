@@ -1,9 +1,41 @@
 /**
  * Tebra MCP tools: Encounter status update.
+ *
+ * UpdateEncounterStatusReq wraps an <EncounterUpdateStatus> element
+ * (WSDL sequence: EncounterID → EncounterStatus → Practice). The real
+ * status enum is EncounterStatusCode: Draft, Submitted, Approved,
+ * Rejected, Unpayable — there is no 'Review' status in the WSDL.
  */
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag } from '../soap-client.js';
+
+const VALID_STATUSES = ['Draft', 'Submitted', 'Approved', 'Rejected', 'Unpayable'];
+
+// ─── Request Body Builder (exported for tests) ──────────────────
+
+export function buildUpdateEncounterStatusBody(args: Record<string, unknown>): string {
+  const encounterId = String(args.encounterId ?? '');
+  const status = String(args.status ?? '');
+  const practiceId = args.practiceId ? String(args.practiceId) : '';
+  const practiceName = args.practiceName ? String(args.practiceName) : '';
+
+  const practiceXml = practiceId || practiceName
+    ? `<kar:Practice>
+              ${practiceId ? `<kar:PracticeID>${escapeXml(practiceId)}</kar:PracticeID>` : ''}
+              ${practiceName ? `<kar:PracticeName>${escapeXml(practiceName)}</kar:PracticeName>` : ''}
+            </kar:Practice>`
+    : '';
+
+  return `
+        <kar:request>
+          <kar:EncounterUpdateStatus>
+            <kar:EncounterID>${escapeXml(encounterId)}</kar:EncounterID>
+            <kar:EncounterStatus>${escapeXml(status)}</kar:EncounterStatus>
+            ${practiceXml}
+          </kar:EncounterUpdateStatus>
+        </kar:request>`;
+}
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -11,7 +43,7 @@ export const encounterStatusTools = [
   {
     name: 'tebra_update_encounter_status',
     description:
-      'Update the status of an encounter in Tebra. Use to move encounters through the workflow (Draft, Review, Approved, Rejected).',
+      "Update the status of an encounter in Tebra. Moves encounters through the billing workflow: Draft → Submitted → Approved (triggers billing) or Rejected (returns to Draft); Unpayable closes it out. Note: Tebra's UI shows Submitted encounters under 'Review'.",
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -21,12 +53,16 @@ export const encounterStatusTools = [
         },
         status: {
           type: 'string',
-          description: 'New status: Draft, Review, Approved, or Rejected',
-          enum: ['Draft', 'Review', 'Approved', 'Rejected'],
+          description: 'New status',
+          enum: VALID_STATUSES,
         },
-        reviewNote: {
+        practiceId: {
           type: 'string',
-          description: 'Optional note explaining the status change',
+          description: 'Optional practice ID (recommended for multi-practice accounts)',
+        },
+        practiceName: {
+          type: 'string',
+          description: 'Optional practice name',
         },
       },
       required: ['encounterId', 'status'],
@@ -49,29 +85,16 @@ export async function handleEncounterStatusTool(
   const status = String(args.status ?? '');
 
   if (!encounterId || !status) {
-    return {
-      content: [{ type: 'text', text: 'encounterId and status are required.' }],
-    };
+    throw new Error('encounterId and status are required.');
   }
 
-  const validStatuses = ['Draft', 'Review', 'Approved', 'Rejected'];
-  if (!validStatuses.includes(status)) {
-    return {
-      content: [{ type: 'text', text: `Invalid status "${status}". Must be one of: ${validStatuses.join(', ')}` }],
-    };
+  if (!VALID_STATUSES.includes(status)) {
+    throw new Error(`Invalid status "${status}". Must be one of: ${VALID_STATUSES.join(', ')} (Tebra's UI 'Review' state corresponds to 'Submitted').`);
   }
 
-  const reviewNote = args.reviewNote ? String(args.reviewNote) : undefined;
-
-  const bodyXml = `
-    <kar:request>
-      <kar:EncounterID>${escapeXml(encounterId)}</kar:EncounterID>
-      <kar:Status>${escapeXml(status)}</kar:Status>
-      ${reviewNote ? `<kar:Notes>${escapeXml(reviewNote)}</kar:Notes>` : ''}
-    </kar:request>`;
-
+  const bodyXml = buildUpdateEncounterStatusBody(args);
   const xml = await soapRequest(config, 'UpdateEncounterStatus', bodyXml);
-  const updatedId = extractTag(xml, 'EncounterID') || extractTag(xml, 'ID') || encounterId;
+  const updatedId = extractTag(xml, 'EncounterID') || encounterId;
 
   return {
     content: [{

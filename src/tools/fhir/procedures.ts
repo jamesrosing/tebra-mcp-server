@@ -3,9 +3,7 @@
  */
 
 import {
-  fhirRequest,
-  getFhirConfig,
-  extractBundleResources,
+  searchFhir,
   formatFhirResult,
   addDateRange,
   codeDisplay,
@@ -61,14 +59,12 @@ export async function handleFhirProcedureTool(
   _name: string,
   args: Record<string, unknown>,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
-  const config = getFhirConfig();
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const params: Record<string, string> = { patient: patientId };
+  const params: Record<string, string | string[]> = { patient: patientId };
   addDateRange(params, args);
 
-  const data = await fhirRequest(config, 'Procedure', params);
-  const resources = extractBundleResources(data);
-  return formatFhirResult(resources, 'procedures', summarize);
+  const { resources, truncated } = await searchFhir('Procedure', params);
+  return formatFhirResult(resources, 'procedures', summarize, truncated);
 }
