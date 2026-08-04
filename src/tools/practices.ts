@@ -5,6 +5,35 @@
 import type { TebraConfig } from '../config.js';
 import { soapRequest, extractTag, extractAllTags } from '../soap-client.js';
 
+// Cached default practice ID for ops whose WSDL requires one (e.g.
+// GetAppointmentReasons.PracticeId, verified live: omitting it faults).
+let cachedDefaultPracticeId: string | null = null;
+
+/**
+ * Resolve the account's first practice ID via GetPractices, cached for the
+ * process lifetime. Used as the default when a tool needs a practice ID and
+ * the caller didn't supply one.
+ */
+export async function resolveDefaultPracticeId(config: TebraConfig): Promise<string> {
+  if (cachedDefaultPracticeId) return cachedDefaultPracticeId;
+
+  const bodyXml = `
+    <kar:request>
+      <kar:Fields />
+      <kar:Filter />
+    </kar:request>`;
+  const xml = await soapRequest(config, 'GetPractices', bodyXml);
+  const first = extractAllTags(xml, 'PracticeData')
+    .map((block) => extractTag(block, 'ID'))
+    .find((id) => id !== '');
+
+  if (!first) {
+    throw new Error('Could not resolve a default practice ID — GetPractices returned no practices. Pass practiceId explicitly.');
+  }
+  cachedDefaultPracticeId = first;
+  return first;
+}
+
 // ─── Tool Definitions ───────────────────────────────────────────
 
 export const practiceTools = [

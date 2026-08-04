@@ -70,10 +70,15 @@ export function buildSearchPatientsBody(args: Record<string, unknown>): string {
   if (normalized.fullName === undefined && normalized.query !== undefined) {
     normalized.fullName = normalized.query;
   }
-  // Exact DOB maps to a single-day DOB range.
+  // Exact DOB maps to [DOB, DOB+1) — ToDateOfBirth is EXCLUSIVE server-side
+  // (verified live 2026-08-03: From=To=DOB returns zero rows; From=DOB,
+  // To=DOB+1 returns exactly the right patient).
   if (normalized.dateOfBirth) {
-    normalized.fromDateOfBirth ??= normalized.dateOfBirth;
-    normalized.toDateOfBirth ??= normalized.dateOfBirth;
+    const dob = String(normalized.dateOfBirth);
+    const next = new Date(`${dob}T00:00:00Z`);
+    next.setUTCDate(next.getUTCDate() + 1);
+    normalized.fromDateOfBirth ??= dob;
+    normalized.toDateOfBirth ??= next.toISOString().slice(0, 10);
   }
 
   return buildListGetBody(PATIENT_FILTER_SEQUENCE, normalized);

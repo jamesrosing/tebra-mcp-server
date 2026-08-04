@@ -22,6 +22,12 @@ const REQUEST_TIMEOUT_MS = 30_000;
  */
 export class NonRetryableError extends Error {}
 const SOAP_NAMESPACE = 'http://www.kareo.com/api/schemas/';
+// xsd7 (ServiceLocation / ProcedureCode types) declares its targetNamespace
+// WITHOUT the trailing slash — a different XML namespace. Members of those
+// request types (Fields, Filter, and filter criteria) must be qualified with
+// this prefix or WCF skips them as unknown elements and faults with
+// "Expecting element 'Fields'". Verified live 2026-08-03.
+const SOAP_NAMESPACE_XSD7 = 'http://www.kareo.com/api/schemas';
 // WCF service contract name. The SOAPAction header must be
 // `${SOAP_NAMESPACE}${SOAP_CONTRACT}/${operation}` — omitting the contract
 // segment causes a "ContractFilter mismatch at the EndpointDispatcher"
@@ -132,7 +138,8 @@ function buildEnvelope(config: TebraConfig, action: string, bodyXml: string): st
   const bodyWithHeader = injectRequestHeader(config, bodyXml);
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"
-               xmlns:kar="${SOAP_NAMESPACE}">
+               xmlns:kar="${SOAP_NAMESPACE}"
+               xmlns:kar7="${SOAP_NAMESPACE_XSD7}">
   <soap:Body>
     <kar:${action}>
       ${bodyWithHeader}
@@ -188,8 +195,10 @@ async function enforceRateLimit(action: string): Promise<void> {
   const lastCall = lastCallTimestamps[action];
   if (lastCall) {
     const elapsed = Date.now() - lastCall;
-    if (elapsed < minInterval) {
-      await sleep(minInterval - elapsed);
+    // +250ms safety margin: an exact-interval gap still trips Tebra's
+    // server-side window check (observed live as a 429 in the ErrorResponse).
+    if (elapsed < minInterval + 250) {
+      await sleep(minInterval + 250 - elapsed);
     }
   }
 
@@ -257,7 +266,14 @@ export async function soapRequest(
         const isError = extractTag(errorResponse, 'IsError');
         if (isError.toLowerCase() === 'true') {
           const errorMsg = extractTag(errorResponse, 'ErrorMessage');
-          throw new NonRetryableError(`Tebra ${action} error: ${(errorMsg || 'Unknown error').slice(0, 500)}`);
+          const message = `Tebra ${action} error: ${(errorMsg || 'Unknown error').slice(0, 500)}`;
+          // Tebra reports throttling inside ErrorResponse (HTTP 200 + "429 …
+          // requested more than allowed") — that one is worth retrying after
+          // backoff; everything else here is deterministic.
+          if (/429|more than allowed/i.test(errorMsg)) {
+            throw new Error(message);
+          }
+          throw new NonRetryableError(message);
         }
       }
 

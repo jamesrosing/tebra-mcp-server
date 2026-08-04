@@ -294,11 +294,21 @@ export async function handleEncounterTool(
 
 // ─── Parsers ────────────────────────────────────────────────────
 
+// GetEncounterDetails returns EncounterStatus as a 1-based numeric code
+// (verified live: 3 on an encounter whose charges report 'Approved').
+const ENCOUNTER_STATUS_LABELS: Record<string, string> = {
+  '1': 'Draft',
+  '2': 'Submitted',
+  '3': 'Approved',
+  '4': 'Rejected',
+  '5': 'Unpayable',
+};
+
 function parseEncounterDetails(xml: string): Array<Record<string, unknown>> {
   return extractAllTags(xml, 'EncounterDetailsData')
     .map((block) => ({
       encounterId: extractTag(block, 'EncounterID'),
-      encounterStatus: extractTag(block, 'EncounterStatus'),
+      encounterStatus: ENCOUNTER_STATUS_LABELS[extractTag(block, 'EncounterStatus')] ?? extractTag(block, 'EncounterStatus'),
       patientId: extractTag(block, 'PatientID'),
       patientName: `${extractTag(block, 'PatientFirstName')} ${extractTag(block, 'PatientLastName')}`.trim(),
       practiceName: extractTag(block, 'PracticeName'),

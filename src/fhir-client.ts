@@ -35,6 +35,23 @@ function truncateBody(text: string, max = 300): string {
 
 // Token cache
 let cachedToken: { accessToken: string; expiresAt: number } | null = null;
+// Once a scope is known to work (or the server tells us the registered one),
+// stick with it for subsequent refreshes.
+let resolvedScope: string | null = null;
+
+async function requestToken(config: FhirConfig, scope: string): Promise<Response> {
+  return fetch(config.tokenUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: config.clientId,
+      client_secret: config.clientSecret,
+      scope,
+    }),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+}
 
 async function getAccessToken(config: FhirConfig): Promise<string> {
   // Check cache (with 60s buffer before expiry)
@@ -42,28 +59,33 @@ async function getAccessToken(config: FhirConfig): Promise<string> {
     return cachedToken.accessToken;
   }
 
-  const response = await fetch(config.tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      // Tebra scopes are whatever was registered in appSphere; override via
-      // TEBRA_FHIR_SCOPE if the registration used something narrower.
-      scope: process.env.TEBRA_FHIR_SCOPE?.trim() || 'system/*.read',
-    }),
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
+  // Tebra scopes are whatever was registered in appSphere; override via
+  // TEBRA_FHIR_SCOPE if the registration used something narrower.
+  let scope = resolvedScope ?? process.env.TEBRA_FHIR_SCOPE?.trim() ?? 'system/*.read';
+  let response = await requestToken(config, scope);
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(
-      `FHIR token request failed (${response.status}): ${truncateBody(text)}. ` +
-      'Note: both the practice and the backend-service client must be activated by Tebra Customer Care before tokens are issued.'
-    );
+    let text = await response.text();
+    // On invalid_scope, Smile CDR's error body names the scope the client is
+    // actually registered with (verified live 2026-08-03) — retry with it.
+    try {
+      const err = JSON.parse(text) as { error?: string; scope?: string };
+      if (err.error === 'invalid_scope' && err.scope && err.scope !== scope) {
+        scope = err.scope;
+        response = await requestToken(config, scope);
+        if (!response.ok) text = await response.text();
+      }
+    } catch { /* non-JSON error body — fall through */ }
+
+    if (!response.ok) {
+      throw new Error(
+        `FHIR token request failed (${response.status}): ${truncateBody(text)}. ` +
+        'Note: both the practice and the backend-service client must be activated by Tebra Customer Care before tokens are issued.'
+      );
+    }
   }
 
+  resolvedScope = scope;
   const data = await response.json() as { access_token: string; expires_in: number };
   cachedToken = {
     accessToken: data.access_token,

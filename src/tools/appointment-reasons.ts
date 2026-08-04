@@ -1,12 +1,15 @@
 /**
  * Tebra MCP tools: Appointment reason retrieval.
  *
- * GetAppointmentReasonsReq has a single optional member (PracticeId) —
- * it does not use the Fields/Filter list shape.
+ * GetAppointmentReasonsReq has a single member, PracticeId, which is
+ * REQUIRED (verified live: omitting it faults with "Expecting element
+ * 'PracticeId'"). When the caller doesn't supply one, the account's first
+ * practice ID is resolved via GetPractices and cached.
  */
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
+import { resolveDefaultPracticeId } from './practices.js';
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -20,7 +23,7 @@ export const appointmentReasonTools = [
       properties: {
         practiceId: {
           type: 'string',
-          description: 'Optional practice ID filter',
+          description: 'Practice ID (defaults to the account\'s first practice)',
         },
       },
       required: [],
@@ -39,11 +42,13 @@ export async function handleAppointmentReasonTool(
     return { content: [{ type: 'text', text: `Unknown appointment reason tool: ${name}` }] };
   }
 
-  const practiceId = args.practiceId ? String(args.practiceId) : '';
+  const practiceId = args.practiceId
+    ? String(args.practiceId)
+    : await resolveDefaultPracticeId(config);
 
   const bodyXml = `
     <kar:request>
-      ${practiceId ? `<kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>` : ''}
+      <kar:PracticeId>${escapeXml(practiceId)}</kar:PracticeId>
     </kar:request>`;
 
   const xml = await soapRequest(config, 'GetAppointmentReasons', bodyXml);

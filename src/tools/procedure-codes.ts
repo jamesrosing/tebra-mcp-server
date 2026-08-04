@@ -27,7 +27,8 @@ const PROCEDURE_CODE_FILTER_SEQUENCE: FilterSequence = [
 // ─── Request Body Builder (exported for tests) ──────────────────
 
 export function buildGetProcedureCodesBody(args: Record<string, unknown>): string {
-  return buildListGetBody(PROCEDURE_CODE_FILTER_SEQUENCE, args);
+  // xsd7 type — members live in the no-trailing-slash namespace (kar7).
+  return buildListGetBody(PROCEDURE_CODE_FILTER_SEQUENCE, args, undefined, 'kar7');
 }
 
 // ─── Tool Definitions ───────────────────────────────────────────

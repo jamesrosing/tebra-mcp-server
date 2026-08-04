@@ -24,7 +24,8 @@ const SERVICE_LOCATION_FILTER_SEQUENCE: FilterSequence = [
 // ─── Request Body Builder (exported for tests) ──────────────────
 
 export function buildGetServiceLocationsBody(args: Record<string, unknown>): string {
-  return buildListGetBody(SERVICE_LOCATION_FILTER_SEQUENCE, args);
+  // xsd7 type — members live in the no-trailing-slash namespace (kar7).
+  return buildListGetBody(SERVICE_LOCATION_FILTER_SEQUENCE, args, undefined, 'kar7');
 }
 
 // ─── Tool Definitions ───────────────────────────────────────────

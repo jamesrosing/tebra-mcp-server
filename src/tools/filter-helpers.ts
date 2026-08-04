@@ -31,6 +31,7 @@ export function buildFilterXml(
   sequence: FilterSequence,
   args: Record<string, unknown>,
   transform?: (argKey: string, value: unknown) => string,
+  prefix = 'kar',
 ): string {
   const parts: string[] = [];
   for (const [argKey, element] of sequence) {
@@ -41,25 +42,31 @@ export function buildFilterXml(
       : typeof raw === 'boolean'
         ? (raw ? 'true' : 'false')
         : String(raw);
-    parts.push(`<kar:${element}>${escapeXml(val)}</kar:${element}>`);
+    parts.push(`<${prefix}:${element}>${escapeXml(val)}</${prefix}:${element}>`);
   }
 
-  if (parts.length === 0) return '<kar:Filter />';
-  return `<kar:Filter>\n        ${parts.join('\n        ')}\n      </kar:Filter>`;
+  if (parts.length === 0) return `<${prefix}:Filter />`;
+  return `<${prefix}:Filter>\n        ${parts.join('\n        ')}\n      </${prefix}:Filter>`;
 }
 
 /**
  * Full list-GET request body: empty Fields followed by the Filter block.
+ *
+ * prefix selects the member namespace: 'kar' for xsd0 types (trailing-slash
+ * namespace), 'kar7' for the xsd7 types (ServiceLocation / ProcedureCode),
+ * whose targetNamespace has NO trailing slash — see soap-client.ts. The
+ * <kar:request> wrapper itself is always in the xsd0 namespace.
  */
 export function buildListGetBody(
   sequence: FilterSequence,
   args: Record<string, unknown>,
   transform?: (argKey: string, value: unknown) => string,
+  prefix = 'kar',
 ): string {
   return `
     <kar:request>
-      <kar:Fields />
-      ${buildFilterXml(sequence, args, transform)}
+      <${prefix}:Fields />
+      ${buildFilterXml(sequence, args, transform, prefix)}
     </kar:request>`;
 }
 

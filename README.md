@@ -358,6 +358,17 @@ The regression suite pins the three Tebra wire-format invariants (SOAPAction con
 
 ## Changelog
 
+### 0.4.1 (2026-08-04)
+
+Live production verification of the 0.4.0 shapes — a full read-only smoke pass (24 checks: every SOAP read tool plus the FHIR pipeline) now passes against a real Tebra practice. Fixes found only by going live:
+
+- **fix(xsd7 namespace)**: GetServiceLocations and GetProcedureCodes faulted with "Expecting element 'Fields'" — xsd7's targetNamespace has NO trailing slash (`…/api/schemas` vs xsd0's `…/api/schemas/`), so their Fields/Filter members are different XML names. The envelope now declares both namespaces and those two tools emit `kar7:`-prefixed members.
+- **fix(get_appointment_reasons)**: `PracticeId` is required by the WSDL (fault when omitted). The handler now auto-resolves the account's first practice ID via GetPractices (cached) when not supplied.
+- **fix(search_patients)**: `ToDateOfBirth` is exclusive server-side — an exact `dateOfBirth` search now sends [DOB, DOB+1) instead of a zero-width range that matched nothing.
+- **fix(rate limiting)**: +250ms safety margin per endpoint window — an exact-interval gap still trips Tebra's server-side 429; throttle errors (reported inside HTTP-200 ErrorResponse blocks) are now classified retryable.
+- **fix(get_encounter)**: GetEncounterDetails returns EncounterStatus as a 1-based numeric code; now mapped to labels (3=Approved, verified live against the same encounter's charge rows).
+- **fix(FHIR auth)**: on `invalid_scope`, the token server names the scope the client is registered with — the client now retries once with that scope automatically (registrations vary between `system/*.read` and `patient/*.read`).
+
 ### 0.4.0 (2026-08-03)
 
 Full-surface WSDL contract audit. Every request builder was re-derived from the live WSDL (`KareoServices.svc?xsd=xsd0`/`xsd7`), which surfaced that the Fields/Filter misplacement fixed for GetCharges in 0.3.0 affected **every other list GET**, and that most write operations used wrong wrapper elements or member names. The failure mode in all cases is silent (unfiltered results, dropped fields, or server-side faults), which is why these survived so long. 26 new regression tests pin the corrected shapes.

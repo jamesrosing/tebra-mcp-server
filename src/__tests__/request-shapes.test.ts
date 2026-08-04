@@ -63,10 +63,10 @@ test('search_patients: criteria in Filter, empty Fields, WSDL order', () => {
   assertOrder(filter, ['FirstName', 'IsActive', 'LastName', 'PrimaryInsurancePolicyCompanyName', 'ToDateOfBirth'], 'PatientFilter');
 });
 
-test('search_patients: exact dateOfBirth becomes a single-day DOB range', () => {
+test('search_patients: exact dateOfBirth becomes [DOB, DOB+1) — ToDateOfBirth is exclusive', () => {
   const filter = filterBlock(buildSearchPatientsBody({ dateOfBirth: '1985-06-15' }));
   assert.match(filter, /<kar:FromDateOfBirth>1985-06-15<\/kar:FromDateOfBirth>/);
-  assert.match(filter, /<kar:ToDateOfBirth>1985-06-15<\/kar:ToDateOfBirth>/);
+  assert.match(filter, /<kar:ToDateOfBirth>1985-06-16<\/kar:ToDateOfBirth>/);
 });
 
 test('search_patients: query is an alias for FullName', () => {
@@ -145,12 +145,26 @@ test('get_transactions: transactionType maps to the WSDL Type member', () => {
 
 // ─── Config-table GETs ──────────────────────────────────────────
 
-test('get_providers / get_service_locations / get_procedure_codes: criteria in Filter', () => {
+test('get_providers: criteria in Filter (xsd0 namespace)', () => {
   assert.match(filterBlock(buildGetProvidersBody({ practiceName: 'Allure' })), /<kar:PracticeName>Allure<\/kar:PracticeName>/);
-  assert.match(filterBlock(buildGetServiceLocationsBody({ practiceName: 'Allure' })), /<kar:PracticeName>Allure<\/kar:PracticeName>/);
-  const pcFilter = filterBlock(buildGetProcedureCodesBody({ searchTerm: '99213' }));
-  assert.match(pcFilter, /<kar:ProcedureCode>99213<\/kar:ProcedureCode>/);
-  assert.doesNotMatch(pcFilter, /<kar:Code>/);
+});
+
+test('get_service_locations / get_procedure_codes: xsd7 members use the kar7 (no-trailing-slash) namespace', () => {
+  // Verified live 2026-08-03: kar:-prefixed Fields/Filter on these two ops
+  // fault with "Expecting element 'Fields'" — xsd7's targetNamespace lacks
+  // the trailing slash, so its members are different XML names.
+  const sl = buildGetServiceLocationsBody({ practiceName: 'Allure' });
+  assert.match(sl, /<kar7:Fields \/>/);
+  assert.match(sl, /<kar7:Filter>[\s\S]*<kar7:PracticeName>Allure<\/kar7:PracticeName>[\s\S]*<\/kar7:Filter>/);
+  assert.match(sl, /<kar:request>/, 'the request wrapper itself stays in the xsd0 namespace');
+
+  const pc = buildGetProcedureCodesBody({ searchTerm: '99213' });
+  assert.match(pc, /<kar7:Fields \/>/);
+  assert.match(pc, /<kar7:ProcedureCode>99213<\/kar7:ProcedureCode>/);
+  assert.doesNotMatch(pc, /<kar7:Code>/);
+
+  const empty = buildGetServiceLocationsBody({});
+  assert.match(empty, /<kar7:Filter \/>/);
 });
 
 // ─── GetAllPatients ─────────────────────────────────────────────
