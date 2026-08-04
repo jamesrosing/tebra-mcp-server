@@ -295,7 +295,10 @@ test('update_patient: PatientID then required Practice per WSDL order', () => {
 test('create_document: DocumentToCreate wrapper with required PracticeId in WSDL order', () => {
   const body = buildCreateDocumentBody({
     patientId: '4127', documentLabel: 'Operative Report', fileName: 'op.pdf', fileContent: 'QUJD', practiceId: '1',
+    encounterDate: '2026-08-04',
   });
+  // DocumentDate is xs:dateTime — date-only input becomes ISO midnight.
+  assert.match(body, /<kar:DocumentDate>2026-08-04T00:00:00<\/kar:DocumentDate>/);
   assert.match(body, /<kar:DocumentToCreate>/);
   assert.doesNotMatch(body, /<kar:Document>/);
   // Label normalized to the enum's no-spaces form.

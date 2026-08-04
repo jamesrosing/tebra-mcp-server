@@ -34,7 +34,10 @@ export function buildCreateDocumentBody(args: Record<string, unknown>): string {
   const fileContent = String(args.fileContent ?? '');
   const documentName = args.documentName ? String(args.documentName) : fileName;
   const description = args.description ? String(args.description) : '';
-  const documentDate = args.encounterDate ? String(args.encounterDate) : '';
+  // DocumentDate is a true xs:dateTime — date-only input is normalized to
+  // ISO midnight (US-format strings fault the deserializer, verified live).
+  const rawDate = args.encounterDate ? String(args.encounterDate).trim() : '';
+  const documentDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? `${rawDate}T00:00:00` : rawDate;
   const practiceId = args.practiceId ? String(args.practiceId) : '';
 
   // PracticeId is a REQUIRED DocumentCreateRequest member (minOccurs=1).
