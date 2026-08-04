@@ -358,6 +358,10 @@ The regression suite pins the three Tebra wire-format invariants (SOAPAction con
 
 ## Changelog
 
+### 0.4.3 (2026-08-04)
+
+- **fix(external IDs)**: fail closed on IDs over 25 characters in `tebra_create_patient` and `tebra_update_patient_external_id` — Tebra's external-ID storage silently truncates at 25 chars (verified live via a UNIQUE KEY collision on the truncated value), which breaks every later lookup by the full value. IDs are also unique per vendor. (This guard just missed the 0.4.2 tarball.)
+
 ### 0.4.2 (2026-08-04)
 
 **The write path is now production-verified**: iterating a live write-smoke harness against a real practice confirmed CreatePatient, CreateAppointment, CreateDocument, and the external-ID batch + vendor-scoped lookup end-to-end (encounter write ops remain opt-in to verify). The runs surfaced four additional wire facts, all fixed here:
