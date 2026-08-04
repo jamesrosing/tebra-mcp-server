@@ -319,6 +319,15 @@ test('update_patient_external_id: batch wrapper with camelCase setting members',
   assertOrder(body, ['externalID', 'externalVendorID', 'patientID'], 'PatientExternalIDSetting');
 });
 
+test('external IDs longer than 25 chars fail closed (Tebra truncates silently)', () => {
+  const tooLong = 'X'.repeat(26);
+  assert.throws(() => buildUpdateExternalIdBody({ patientId: '1', externalId: tooLong }), /25/);
+  assert.throws(
+    () => buildCreatePatientBody({ firstName: 'A', lastName: 'B', dateOfBirth: '1990-01-01', practiceId: '1', externalId: tooLong }),
+    /25-character/
+  );
+});
+
 // ─── FHIR helpers ───────────────────────────────────────────────
 
 test('fhir addDateRange: from+to produces two repeated date params, not one concatenated value', () => {

@@ -22,6 +22,15 @@ export function buildUpdateExternalIdBody(args: Record<string, unknown>): string
   const externalVendorId = args.externalVendorId ? String(args.externalVendorId) : '';
   const practiceId = args.practiceId ? String(args.practiceId) : '';
 
+  // Tebra's ExternalIDToPatientMap column holds 25 characters and TRUNCATES
+  // silently on write (verified live 2026-08-04), which breaks every later
+  // lookup by the full value. IDs are also UNIQUE per vendor. Fail closed.
+  if (externalId.length > 25) {
+    throw new Error(
+      `tebra_update_patient_external_id: externalId '${externalId}' is ${externalId.length} chars — Tebra stores at most 25 and silently truncates, breaking lookups. Use a shorter ID.`
+    );
+  }
+
   // PatientExternalIDSetting sequence (camelCase): externalID →
   // externalVendorID → patientID → practiceID.
   return `

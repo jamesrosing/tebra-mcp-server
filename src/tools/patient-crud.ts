@@ -46,6 +46,15 @@ export function buildCreatePatientBody(args: Record<string, unknown>): string {
   const primaryInsurance = args.primaryInsurance as InsuranceInput | undefined;
   const guarantor = args.guarantor as GuarantorInput | undefined;
 
+  // Tebra stores external IDs in 25 characters and truncates silently,
+  // breaking later lookups — fail closed (verified live 2026-08-04).
+  const externalId = str('externalId');
+  if (externalId.length > 25) {
+    throw new Error(
+      `tebra_create_patient: externalId '${externalId}' exceeds Tebra's 25-character external-ID limit (silent truncation breaks lookups).`
+    );
+  }
+
   // Insurance policies must ride inside a patient case (Cases → Policies).
   let casesXml = '';
   if (primaryInsurance) {
