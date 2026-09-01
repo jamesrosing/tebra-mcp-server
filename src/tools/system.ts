@@ -16,6 +16,7 @@
 
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
+import { resolveDefaultPracticeId } from './practices.js';
 
 // ─── Tool Definitions ───────────────────────────────────────────
 
@@ -76,7 +77,7 @@ export const systemTools = [
         },
         practiceId: {
           type: 'string',
-          description: 'Optional practice ID',
+          description: 'Optional practice ID (defaults to the account\'s first practice)',
         },
       },
       required: ['name', 'duration'],
@@ -182,7 +183,9 @@ export async function handleSystemTool(
       }
 
       const color = args.color != null ? Number(args.color) : NaN;
-      const practiceId = args.practiceId ? String(args.practiceId) : '';
+      const practiceId = args.practiceId
+        ? String(args.practiceId)
+        : await resolveDefaultPracticeId(config);
 
       // AppointmentReasonCreate WSDL sequence: DefaultColorCode →
       // DefaultDurationMinutes → Name → PracticeId.

@@ -16,6 +16,7 @@
 import type { TebraConfig } from '../config.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
 import { buildListGetBody, type FilterSequence } from './filter-helpers.js';
+import { resolveDefaultPracticeId } from './practices.js';
 
 // ─── WSDL Sequence Table (source of truth: ?xsd=xsd0 EncounterDetailsFilter) ──
 
@@ -133,7 +134,7 @@ export const encounterTools = [
   {
     name: 'tebra_create_encounter',
     description:
-      'Create a new encounter (superbill) in Tebra with diagnoses and procedures. Each procedure becomes a service line carrying up to 4 ICD-10 diagnosis codes (from the encounter-level diagnoses array, or per-procedure diagnosisCodes). practiceName or practiceId is strongly recommended — Tebra requires the practice on most accounts. Returns the created encounter ID.',
+      'Create a new encounter (superbill) in Tebra with diagnoses and procedures. Each procedure becomes a service line carrying up to 4 ICD-10 diagnosis codes (from the encounter-level diagnoses array, or per-procedure diagnosisCodes). The practice is required by Tebra on most accounts; if practiceName/practiceId are omitted, the account\'s first practice is used automatically. Returns the created encounter ID.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -151,7 +152,7 @@ export const encounterTools = [
         },
         practiceName: {
           type: 'string',
-          description: 'Practice name (strongly recommended; required by Tebra on most accounts)',
+          description: 'Optional practice name (defaults to the account\'s first practice)',
         },
         practiceId: {
           type: 'string',
@@ -264,7 +265,11 @@ export async function handleEncounterTool(
         throw new Error('At least one diagnosis is required (encounter-level diagnoses or per-procedure diagnosisCodes).');
       }
 
-      const bodyXml = buildCreateEncounterBody(args);
+      const effectiveArgs = args.practiceId || args.practiceName
+        ? args
+        : { ...args, practiceId: await resolveDefaultPracticeId(config) };
+
+      const bodyXml = buildCreateEncounterBody(effectiveArgs);
       const xml = await soapRequest(config, 'CreateEncounter', bodyXml);
       const encounterId = extractTag(xml, 'EncounterID');
       const serviceLinesAdded = extractAllTags(xml, 'ServiceLineRes').length;

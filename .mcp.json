@@ -1,7 +1,9 @@
 {
   "tebra": {
-    "command": "npx",
-    "args": ["-y", "tebra-mcp-server"],
+    "command": "node",
+    "args": [
+      "C:\\Users\\User\\Documents\\tebra-mcp-server\\dist\\index.js"
+    ],
     "env": {
       "TEBRA_SOAP_USER": "",
       "TEBRA_SOAP_PASSWORD": "",
