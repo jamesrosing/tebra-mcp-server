@@ -37,12 +37,14 @@ npx tebra-mcp-server
 | Variable | Required | Description |
 |---|---|---|
 | `TEBRA_FHIR_CLIENT_ID` | For FHIR | OAuth2 client ID from Tebra appSphere registration |
-| `TEBRA_FHIR_CLIENT_SECRET` | For FHIR | OAuth2 client secret |
+| `TEBRA_FHIR_PRIVATE_KEY_PATH` | For FHIR (JWKS registrations) | Path to the PEM (PKCS#8) private key for SMART Backend Services `private_key_jwt`; its public half is the JWKS you registered with Tebra. Takes precedence over the secret |
+| `TEBRA_FHIR_KID` | With the key path | The `kid` of that public key in your published JWKS (required whenever the key path is set) |
+| `TEBRA_FHIR_CLIENT_SECRET` | For FHIR (secret registrations) | OAuth2 client secret — the fallback used only when no key path is set |
 | `TEBRA_FHIR_BASE_URL` | No | FHIR R4 base URL (defaults to `https://fhir.prd.cloud.tebra.com/fhir-request`) |
 | `TEBRA_FHIR_TOKEN_URL` | No | OAuth2 token endpoint (defaults to Tebra production) |
 | `TEBRA_FHIR_SCOPE` | No | OAuth2 scope (defaults to `system/*.read`; match your appSphere registration) |
 
-FHIR credentials are obtained through Tebra appSphere. The server uses the OAuth2 client credentials flow with automatic token caching, refresh 60s before expiry, and a one-shot retry on 401. Note: both the practice and the backend-service client must be activated by Tebra Customer Care before tokens are issued — a 401 can mean "not yet activated" rather than "bad credentials".
+FHIR credentials are obtained through Tebra appSphere. The server uses the OAuth2 client credentials flow with automatic token caching, refresh 60s before expiry, and a one-shot retry on 401. Two client authentications are supported: **SMART Backend Services `private_key_jwt`** (an appSphere Backend App registered as "Confidential (URL for JWKS)" — the server signs an RS384 client assertion with `iss`=`sub`=client id, `aud`=token URL, a 5-minute `exp` and a unique `jti`, sent as `client_assertion` with `client_assertion_type=urn:ietf:params:oauth:client-assertion-type:jwt-bearer`; the private key is read from disk once and never transmitted) and the legacy **`client_secret`** flow. Set the key path for the former, the secret for the latter. Note: both the practice and the backend-service client must be activated by Tebra Customer Care before tokens are issued — a 401 can mean "not yet activated" rather than "bad credentials".
 
 ## Installation
 
@@ -357,6 +359,10 @@ The regression suite pins the three Tebra wire-format invariants (SOAPAction con
 - Agent-facing evaluation set (10 read-only, verifiable questions) to catch wrong-but-plausible data — the failure class unit tests cannot see
 
 ## Changelog
+
+### 0.5.0 (2026-09-04)
+
+- **feat(FHIR auth)**: SMART Backend Services `private_key_jwt` client authentication. With `TEBRA_FHIR_PRIVATE_KEY_PATH` + `TEBRA_FHIR_KID` set, the token request carries an RS384 client assertion (`iss`=`sub`=client id, `aud`=token URL, `exp`=5 min, unique `jti` per request) instead of a secret — the shape an appSphere Backend App registered with a JWKS URL requires. `client_secret` remains the fallback when no key path is set; an existing secret install is unchanged. `FhirConfig.clientSecret` is now optional and `FhirConfig.privateKey` is new. Tested offline: the assertion is verified against a published JWKS fixture, never a live token endpoint.
 
 ### 0.4.3 (2026-08-04)
 

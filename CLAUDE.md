@@ -23,7 +23,7 @@ Tests use node:test through tsx (no framework install). `src/__tests__/request-s
 
 **SOAP (required)**: `TEBRA_SOAP_USER`, `TEBRA_SOAP_PASSWORD`, `TEBRA_CUSTOMER_KEY` — validated at startup by `getConfig()`. Optional: `TEBRA_SOAP_ENDPOINT` (defaults to Kareo production endpoint).
 
-**FHIR (optional)**: `TEBRA_FHIR_CLIENT_ID`, `TEBRA_FHIR_CLIENT_SECRET` — if set, FHIR tools are registered. Optional: `TEBRA_FHIR_BASE_URL` (defaults to Tebra FHIR production endpoint).
+**FHIR (optional)**: `TEBRA_FHIR_CLIENT_ID` plus EITHER `TEBRA_FHIR_PRIVATE_KEY_PATH` + `TEBRA_FHIR_KID` (SMART Backend Services `private_key_jwt`, RS384 client assertion — preferred, and the only auth a JWKS-registered appSphere Backend App accepts) OR `TEBRA_FHIR_CLIENT_SECRET` (legacy fallback, used only when no key path is set) — if set, FHIR tools are registered. Optional: `TEBRA_FHIR_BASE_URL` (defaults to Tebra FHIR production endpoint). `src/__tests__/fhir-client-auth.test.ts` pins the assertion shape and the token-request body offline; it never contacts Tebra.
 
 ## Architecture
 
