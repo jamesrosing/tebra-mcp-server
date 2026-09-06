@@ -21,6 +21,56 @@ const REQUEST_TIMEOUT_MS = 30_000;
  * burning ~7s of backoff re-sending a request that will fail identically.
  */
 export class NonRetryableError extends Error {}
+
+/**
+ * Tebra refused the request before acting on it (HTTP 429 or the in-body
+ * "429 … more than allowed" ErrorResponse). Safe to retry for any action.
+ */
+class ThrottledError extends Error {}
+
+/**
+ * A non-idempotent action failed in a way that leaves the outcome unknown:
+ * the request may have reached Tebra and been committed with only the response
+ * lost (timeout, reset after send, 5xx from a proxy). Re-sending would risk a
+ * duplicate record — for CreatePayment, a second charge on the patient's
+ * account. Never retried; the caller must verify before resubmitting (#13).
+ */
+export class AmbiguousOutcomeError extends Error {}
+
+/**
+ * Actions that create a record. Retrying one of these is only safe when the
+ * failure provably happened before Tebra could act: a throttle rejection, or a
+ * connection that never opened. Tebra's SOAP API exposes no idempotency key,
+ * so a duplicate submit is a duplicate record.
+ */
+const NON_IDEMPOTENT_ACTIONS = new Set([
+  'CreatePatient',
+  'CreateAppointment',
+  'CreateEncounter',
+  'CreateDocument',
+  'CreatePayment',
+  'CreateAppointmentReason',
+]);
+
+/** How the caller can check whether the ambiguous attempt actually landed. */
+const VERIFY_HINTS: Record<string, string> = {
+  CreatePayment:
+    'tebra_get_payments filtered by amount and post date (or referenceNumber)',
+  CreatePatient: 'tebra_get_patients by name and date of birth',
+  CreateAppointment: 'tebra_get_appointments for the patient and date',
+  CreateEncounter: 'tebra_get_encounter_details for the patient and service date',
+  CreateDocument: 'tebra_get_documents for the patient',
+  CreateAppointmentReason: 'tebra_get_appointment_reasons',
+};
+
+/** Connection-level failures where no bytes reached the server. */
+const PRE_CONNECTION_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH']);
+
+function failedBeforeSend(error: Error): boolean {
+  if (error instanceof ThrottledError) return true;
+  const code = (error as { cause?: { code?: unknown } }).cause?.code;
+  return typeof code === 'string' && PRE_CONNECTION_CODES.has(code);
+}
 const SOAP_NAMESPACE = 'http://www.kareo.com/api/schemas/';
 // xsd7 (ServiceLocation / ProcedureCode types) declares its targetNamespace
 // WITHOUT the trailing slash — a different XML namespace. Members of those
@@ -250,7 +300,10 @@ export async function soapRequest(
         const faultString = extractTag(responseText, 'faultstring');
         const message = `SOAP ${action} failed (HTTP ${response.status}): ${(faultString || response.statusText).slice(0, 500)}`;
         // Only server-side transients are worth retrying; 4xx will fail identically.
-        if (response.status >= 500 || response.status === 429) {
+        if (response.status === 429) {
+          throw new ThrottledError(message);
+        }
+        if (response.status >= 500) {
           throw new Error(message);
         }
         throw new NonRetryableError(message);
@@ -271,7 +324,7 @@ export async function soapRequest(
           // requested more than allowed") — that one is worth retrying after
           // backoff; everything else here is deterministic.
           if (/429|more than allowed/i.test(errorMsg)) {
-            throw new Error(message);
+            throw new ThrottledError(message);
           }
           throw new NonRetryableError(message);
         }
@@ -284,6 +337,14 @@ export async function soapRequest(
     } catch (error) {
       if (error instanceof NonRetryableError) throw error;
       lastError = error instanceof Error ? error : new Error(String(error));
+
+      if (NON_IDEMPOTENT_ACTIONS.has(action) && !failedBeforeSend(lastError)) {
+        throw new AmbiguousOutcomeError(
+          `SOAP ${action} outcome unknown (${lastError.message}). The request may have ` +
+            `reached Tebra and been committed, so it was NOT retried — resubmitting could ` +
+            `create a duplicate. Verify first with ${VERIFY_HINTS[action] ?? 'a read of the record'}.`
+        );
+      }
 
       if (attempt < MAX_RETRIES) {
         const delayMs = BASE_DELAY_MS * Math.pow(2, attempt - 1);
