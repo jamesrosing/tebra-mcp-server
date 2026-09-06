@@ -12,8 +12,9 @@
  *   TEBRA_CUSTOMER_KEY    — Customer key from Tebra PM admin
  *
  * Optional FHIR (clinical data):
- *   TEBRA_FHIR_CLIENT_ID     — FHIR OAuth2 client ID
- *   TEBRA_FHIR_CLIENT_SECRET — FHIR OAuth2 client secret
+ *   TEBRA_FHIR_CLIENT_ID        — FHIR OAuth2 client ID
+ *   TEBRA_FHIR_PRIVATE_KEY_PATH — PKCS#8 private key for private_key_jwt (requires TEBRA_FHIR_KID)
+ *   TEBRA_FHIR_CLIENT_SECRET    — OAuth2 client secret (fallback when no key path is set)
  *
  * Usage:
  *   npx tebra-mcp-server
@@ -146,7 +147,7 @@ if (isFhirConfigured()) {
   );
   console.error('FHIR tools enabled — 13 clinical data tools registered');
 } else {
-  console.error('FHIR tools disabled — set TEBRA_FHIR_CLIENT_ID and TEBRA_FHIR_CLIENT_SECRET to enable clinical data tools');
+  console.error('FHIR tools disabled — set TEBRA_FHIR_CLIENT_ID plus TEBRA_FHIR_PRIVATE_KEY_PATH + TEBRA_FHIR_KID (or TEBRA_FHIR_CLIENT_SECRET) to enable clinical data tools');
 }
 
 console.error(`Tebra MCP server: ${allTools.length} tools registered`);
