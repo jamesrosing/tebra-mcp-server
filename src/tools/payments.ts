@@ -154,7 +154,7 @@ export const paymentTools = [
   {
     name: 'tebra_create_payment',
     description:
-      'Create a new patient payment in Tebra. Supports Cash, Check, CreditCard, ElectronicFundsTransfer, and Other payment methods. Optionally link to an appointment and practice.',
+      'Create a new patient payment in Tebra. Supports Cash, Check, CreditCard, ElectronicFundsTransfer, and Other payment methods. Optionally link to an appointment and practice. Not retried after a timeout or server error (Tebra has no idempotency key, so a re-send can double-charge); if the call fails with an unknown outcome, check tebra_get_payments before resubmitting. Supply referenceNumber so any duplicate is detectable.',
     inputSchema: {
       type: 'object' as const,
       properties: {

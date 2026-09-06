@@ -360,6 +360,11 @@ The regression suite pins the three Tebra wire-format invariants (SOAPAction con
 
 ## Changelog
 
+### 0.5.1 (2026-09-06)
+
+- **fix(retry safety)**: `tebra_create_payment` (and every other Create* action) is no longer re-sent after a timeout, a reset after send, or an HTTP 5xx. Those failures are ambiguous — Tebra may have committed the write with only the response lost — and Tebra's SOAP API has no idempotency key, so the automatic retry could post a second payment to a patient's account (#13). Create* actions now retry only on failures that provably happened before Tebra could act (429 throttle, connection refused/unresolved); anything else throws `AmbiguousOutcomeError` naming the read tool to verify with before resubmitting. Read actions keep the full 3-attempt retry.
+- The "FHIR tools disabled" startup message and env-var doc comments now name the `private_key_jwt` route; `package-lock.json` resynced to the package version (#17).
+
 ### 0.5.0 (2026-09-04)
 
 - **feat(FHIR auth)**: SMART Backend Services `private_key_jwt` client authentication. With `TEBRA_FHIR_PRIVATE_KEY_PATH` + `TEBRA_FHIR_KID` set, the token request carries an RS384 client assertion (`iss`=`sub`=client id, `aud`=token URL, `exp`=5 min, unique `jti` per request) instead of a secret — the shape an appSphere Backend App registered with a JWKS URL requires. `client_secret` remains the fallback when no key path is set; an existing secret install is unchanged. `FhirConfig.clientSecret` is now optional and `FhirConfig.privateKey` is new. Tested offline: the assertion is verified against a published JWKS fixture, never a live token endpoint.
