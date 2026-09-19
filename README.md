@@ -319,6 +319,20 @@ All clinical tebra_fhir_get_* tools
   require: FHIR patientId (from tebra_fhir_search_patients — NOT the SOAP patient ID)
 ```
 
+## Privacy Policy
+
+This server runs locally and talks only to Tebra's API with your own credentials. It has no backend, no telemetry, and writes nothing to disk. Credentials and patient identifiers are scrubbed from the debug log and from error messages, and every record-returning tool takes a `fields` argument for minimum-necessary selection. Tool results contain protected health information, so sending them to Claude requires a Claude plan under which Anthropic signs a Business Associate Agreement. The full policy is in [PRIVACY.md](PRIVACY.md).
+
+## Desktop Extension (.mcpb)
+
+`manifest.json` packages the server as an MCP Bundle for Claude Desktop, with every credential declared as sensitive `user_config` (stored in the OS keychain) and the FHIR private key as a `file` input. Build the bundle with:
+
+```bash
+npm run pack:mcpb   # builds, prunes dev dependencies, writes tebra-mcp-server.mcpb
+```
+
+`src/__tests__/manifest.test.ts` pins the manifest to `package.json` and to the tool registry, so a tool added to the server without a manifest entry fails the suite.
+
 ## API Reference
 
 The server wraps two Tebra APIs:

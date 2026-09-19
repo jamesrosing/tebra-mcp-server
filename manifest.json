@@ -1,0 +1,304 @@
+{
+  "manifest_version": "0.2",
+  "name": "tebra-mcp-server",
+  "display_name": "Tebra Practice Management",
+  "version": "0.5.1",
+  "description": "Patients, scheduling, encounters, billing, and FHIR clinical data from your own Tebra (Kareo) account.",
+  "long_description": "Connects an existing Tebra practice to Claude through the Tebra SOAP API v2.1 and FHIR R4 API. Independent open-source project, not affiliated with or endorsed by Tebra. All data stays between this extension, your Tebra account, and Claude; nothing is proxied through a third-party server. Tool results contain protected health information — use it only under a Claude plan covered by a Business Associate Agreement with Anthropic.",
+  "author": {
+    "name": "James H. Rosing, MD, FACS",
+    "email": "james@allure-md.com",
+    "url": "https://github.com/jamesrosing"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jamesrosing/tebra-mcp-server"
+  },
+  "homepage": "https://github.com/jamesrosing/tebra-mcp-server",
+  "documentation": "https://github.com/jamesrosing/tebra-mcp-server#readme",
+  "support": "https://github.com/jamesrosing/tebra-mcp-server/issues",
+  "license": "MIT",
+  "keywords": [
+    "tebra",
+    "kareo",
+    "practice-management",
+    "medical-billing",
+    "fhir",
+    "healthcare"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/index.js"
+      ],
+      "env": {
+        "TEBRA_SOAP_USER": "${user_config.tebra_soap_user}",
+        "TEBRA_SOAP_PASSWORD": "${user_config.tebra_soap_password}",
+        "TEBRA_CUSTOMER_KEY": "${user_config.tebra_customer_key}",
+        "TEBRA_FHIR_CLIENT_ID": "${user_config.tebra_fhir_client_id}",
+        "TEBRA_FHIR_PRIVATE_KEY_PATH": "${user_config.tebra_fhir_private_key_path}",
+        "TEBRA_FHIR_KID": "${user_config.tebra_fhir_kid}",
+        "TEBRA_FHIR_CLIENT_SECRET": "${user_config.tebra_fhir_client_secret}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "tebra_search_patients",
+      "description": "Search for patients in Tebra with flexible filters."
+    },
+    {
+      "name": "tebra_get_patient",
+      "description": "Get a full patient record from Tebra by patient ID, or by external system ID (optionally scoped to an external vendor)."
+    },
+    {
+      "name": "tebra_get_encounter",
+      "description": "Get encounter details from Tebra by encounter ID, including patient, providers, status, service dates, place of service, and service line IDs."
+    },
+    {
+      "name": "tebra_create_encounter",
+      "description": "Create a new encounter (superbill) in Tebra with diagnoses and procedures."
+    },
+    {
+      "name": "tebra_get_patient_authorizations",
+      "description": "Get all insurance authorizations for a Tebra patient across all cases and policies."
+    },
+    {
+      "name": "tebra_get_appointments",
+      "description": "Get appointments from Tebra within a date range."
+    },
+    {
+      "name": "tebra_check_insurance_eligibility",
+      "description": "Check insurance eligibility for a Tebra patient."
+    },
+    {
+      "name": "tebra_get_charges",
+      "description": "Get charges from Tebra with flexible filters: date range, patient name, provider, procedure/diagnosis codes, billing status, encounter status, and more."
+    },
+    {
+      "name": "tebra_get_procedure_codes",
+      "description": "Get procedure codes configured in the Tebra practice."
+    },
+    {
+      "name": "tebra_get_providers",
+      "description": "Get providers with IDs, names, specialties, NPI, and active status."
+    },
+    {
+      "name": "tebra_get_service_locations",
+      "description": "Get all service locations (offices/facilities)."
+    },
+    {
+      "name": "tebra_get_appointment_reasons",
+      "description": "Get all appointment reasons configured in the practice."
+    },
+    {
+      "name": "tebra_create_appointment",
+      "description": "Create a new patient appointment in Tebra."
+    },
+    {
+      "name": "tebra_update_appointment",
+      "description": "Update an existing appointment in Tebra."
+    },
+    {
+      "name": "tebra_update_appointment_status",
+      "description": "Update only the status of an appointment (e.g."
+    },
+    {
+      "name": "tebra_delete_appointment",
+      "description": "Delete an appointment from Tebra by appointment ID."
+    },
+    {
+      "name": "tebra_get_appointment_detail",
+      "description": "Get full detail for a single appointment by ID, including recurrence rules, group data, and all resource slots."
+    },
+    {
+      "name": "tebra_create_patient",
+      "description": "Create a new patient in Tebra with demographics, address, insurance, and guarantor information."
+    },
+    {
+      "name": "tebra_update_patient",
+      "description": "Update an existing patient in Tebra."
+    },
+    {
+      "name": "tebra_update_encounter_status",
+      "description": "Update the status of an encounter in Tebra."
+    },
+    {
+      "name": "tebra_get_payments",
+      "description": "Get payments from Tebra with optional post-date range, payer, batch, appointment, and reference-number filters."
+    },
+    {
+      "name": "tebra_create_payment",
+      "description": "Create a new patient payment in Tebra."
+    },
+    {
+      "name": "tebra_get_transactions",
+      "description": "Get financial transactions from Tebra with optional date range, type, payer, procedure code, and practice filters."
+    },
+    {
+      "name": "tebra_get_practices",
+      "description": "Get all practices associated with the Tebra account."
+    },
+    {
+      "name": "tebra_create_document",
+      "description": "Upload a document to a patient record in Tebra via base64 content (PDF, JPG, PNG, TIFF — type inferred from the file extension)."
+    },
+    {
+      "name": "tebra_delete_document",
+      "description": "Delete a document from Tebra by document ID."
+    },
+    {
+      "name": "tebra_get_all_patients",
+      "description": "Get all patients in bulk with pagination."
+    },
+    {
+      "name": "tebra_update_patient_external_id",
+      "description": "Set or update a patient external ID in Tebra, linking the patient to an external system."
+    },
+    {
+      "name": "tebra_register_external_vendor",
+      "description": "Register a new external vendor in Tebra for external ID mapping."
+    },
+    {
+      "name": "tebra_get_external_vendors",
+      "description": "Get all registered external vendors in Tebra with their IDs."
+    },
+    {
+      "name": "tebra_get_throttles",
+      "description": "Get the per-endpoint API throttle intervals (milliseconds between calls) that Tebra enforces for this account."
+    },
+    {
+      "name": "tebra_validate_connection",
+      "description": "Validate the Tebra API credentials by retrieving the customer ID and authorization flag."
+    },
+    {
+      "name": "tebra_set_primary_patient_case",
+      "description": "Promote an existing patient case to be the primary case, by case ID."
+    },
+    {
+      "name": "tebra_create_appointment_reason",
+      "description": "Create a new appointment reason in Tebra with name and default duration."
+    },
+    {
+      "name": "tebra_fhir_get_allergies",
+      "description": "Get patient allergy and intolerance data from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_medications",
+      "description": "Get patient medication requests from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_conditions",
+      "description": "Get patient conditions/diagnoses from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_vitals",
+      "description": "Get patient vital signs from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_lab_results",
+      "description": "Get patient laboratory results from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_immunizations",
+      "description": "Get patient immunization history from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_procedures",
+      "description": "Get patient procedure history from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_care_plans",
+      "description": "Get patient care plans from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_care_team",
+      "description": "Get patient care team from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_diagnostic_reports",
+      "description": "Get patient diagnostic reports from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_documents",
+      "description": "Get patient document references from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_get_devices",
+      "description": "Get patient-associated devices from Tebra FHIR API."
+    },
+    {
+      "name": "tebra_fhir_search_patients",
+      "description": "Search patients in the Tebra FHIR API by name, birthdate, or identifier."
+    }
+  ],
+  "tools_generated": false,
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  },
+  "user_config": {
+    "tebra_soap_user": {
+      "type": "string",
+      "title": "Tebra SOAP API user",
+      "description": "API user email generated in Tebra PM under Settings > API.",
+      "required": true,
+      "sensitive": true
+    },
+    "tebra_soap_password": {
+      "type": "string",
+      "title": "Tebra SOAP API password",
+      "description": "Password for the API user.",
+      "required": true,
+      "sensitive": true
+    },
+    "tebra_customer_key": {
+      "type": "string",
+      "title": "Tebra customer key",
+      "description": "Per-practice customer key from Tebra PM admin.",
+      "required": true,
+      "sensitive": true
+    },
+    "tebra_fhir_client_id": {
+      "type": "string",
+      "title": "FHIR client ID (optional)",
+      "description": "OAuth2 client ID from a Tebra appSphere Backend App. Enables the 13 FHIR clinical tools.",
+      "required": false,
+      "sensitive": true
+    },
+    "tebra_fhir_private_key_path": {
+      "type": "file",
+      "title": "FHIR private key (optional)",
+      "description": "PKCS#8 PEM private key for SMART Backend Services private_key_jwt. Its public half is the JWKS registered with Tebra. Read from disk once; never transmitted.",
+      "required": false,
+      "sensitive": true
+    },
+    "tebra_fhir_kid": {
+      "type": "string",
+      "title": "FHIR key ID (optional)",
+      "description": "The kid of the private key in your published JWKS. Required whenever a key path is set.",
+      "required": false,
+      "sensitive": true
+    },
+    "tebra_fhir_client_secret": {
+      "type": "string",
+      "title": "FHIR client secret (optional)",
+      "description": "Legacy client_secret fallback, used only when no private key path is set.",
+      "required": false,
+      "sensitive": true
+    }
+  },
+  "privacy_policies": [
+    "https://github.com/jamesrosing/tebra-mcp-server/blob/main/PRIVACY.md"
+  ]
+}
