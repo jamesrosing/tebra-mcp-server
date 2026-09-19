@@ -16,6 +16,7 @@
  */
 
 import type { TebraConfig } from '../config.js';
+import { FIELDS_ARG, omitFields, selectFields } from './field-select.js';
 import {
   soapRequest,
   escapeXml,
@@ -197,6 +198,7 @@ export const patientTools = [
           type: 'string',
           description: 'Created date range end (YYYY-MM-DD)',
         },
+        ...FIELDS_ARG,
       },
       required: [],
     },
@@ -204,7 +206,7 @@ export const patientTools = [
   {
     name: 'tebra_get_patient',
     description:
-      'Get a full patient record from Tebra by patient ID, or by external system ID (optionally scoped to an external vendor). Includes demographics, contact info, cases, insurance policies, and authorizations.',
+      'Get a full patient record from Tebra by patient ID, or by external system ID (optionally scoped to an external vendor). Includes demographics, contact info, cases, insurance policies, and authorizations. Insurance policy and group numbers are omitted unless named in `fields`.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -220,6 +222,7 @@ export const patientTools = [
           type: 'string',
           description: 'Optional external vendor ID to scope the externalId lookup',
         },
+        ...FIELDS_ARG,
       },
       required: [],
     },
@@ -227,6 +230,8 @@ export const patientTools = [
 ];
 
 // ─── Tool Handler ───────────────────────────────────────────────
+
+const GET_PATIENT_DEFAULT_OMIT = ['cases.policies.policyNumber', 'cases.policies.groupNumber'];
 
 export async function handlePatientTool(
   name: string,
@@ -245,7 +250,7 @@ export async function handlePatientTool(
 
       const bodyXml = buildSearchPatientsBody(args);
       const xml = await soapRequest(config, 'GetPatients', bodyXml);
-      const patients = parsePatientList(xml);
+      const patients = selectFields(parsePatientList(xml), args.fields);
 
       return {
         content: [
@@ -271,7 +276,10 @@ export async function handlePatientTool(
         };
       }
 
-      const patient = parsePatientBlock(patientBlock);
+      // Policy/group numbers are insurance identifiers — only return them on request.
+      const patient = args.fields === undefined
+        ? omitFields(parsePatientBlock(patientBlock), GET_PATIENT_DEFAULT_OMIT)
+        : selectFields([parsePatientBlock(patientBlock)], args.fields)[0];
       return {
         content: [{ type: 'text', text: JSON.stringify(patient, null, 2) }],
       };

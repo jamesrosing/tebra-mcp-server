@@ -8,6 +8,7 @@
  */
 
 import type { TebraConfig } from '../config.js';
+import { FIELDS_ARG, selectFields } from './field-select.js';
 import { soapRequest, extractTag, extractAllTags } from '../soap-client.js';
 import {
   buildListGetBody,
@@ -123,6 +124,7 @@ export const appointmentTools = [
           type: 'string',
           description: 'Patient case payer scenario filter',
         },
+        ...FIELDS_ARG,
       },
       required: ['startDate', 'endDate'],
     },
@@ -183,6 +185,6 @@ export async function handleAppointmentTool(
   }
 
   return {
-    content: [{ type: 'text', text: JSON.stringify(appointments, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(selectFields(appointments, args.fields), null, 2) }],
   };
 }

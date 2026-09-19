@@ -20,6 +20,7 @@
  */
 
 import type { TebraConfig } from '../config.js';
+import { FIELDS_ARG, selectFields } from './field-select.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
 
 // ─── WSDL Sequence Table (source of truth: ?xsd=xsd0) ───────────
@@ -205,6 +206,7 @@ export const chargeTools = [
           type: 'string',
           description: 'Created date range end (YYYY-MM-DD)',
         },
+        ...FIELDS_ARG,
       },
       required: [],
     },
@@ -233,6 +235,6 @@ export async function handleChargeTool(
   }
 
   return {
-    content: [{ type: 'text', text: JSON.stringify(charges, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(selectFields(charges, args.fields), null, 2) }],
   };
 }

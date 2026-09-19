@@ -7,6 +7,7 @@
  */
 
 import type { TebraConfig } from '../config.js';
+import { FIELDS_ARG, selectFields } from './field-select.js';
 import { soapRequest, extractTag, extractAllTags } from '../soap-client.js';
 import { buildListGetBody, type FilterSequence } from './filter-helpers.js';
 
@@ -96,6 +97,7 @@ export const transactionTools = [
           type: 'string',
           description: 'Optional practice name filter',
         },
+        ...FIELDS_ARG,
       },
       required: [],
     },
@@ -146,6 +148,6 @@ export async function handleTransactionTool(
   }
 
   return {
-    content: [{ type: 'text', text: JSON.stringify(transactions, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(selectFields(transactions, args.fields), null, 2) }],
   };
 }
