@@ -64,3 +64,12 @@ test('manifest.json marks every credential as sensitive user_config and maps it 
     assert.equal(manifest.user_config[name.toLowerCase()].required, true, `${name} not required`);
   }
 });
+
+test('README, package.json, and the skill state independence from Tebra and the BAA requirement', () => {
+  const readme = read('README.md');
+  assert.match(readme, /not affiliated with, endorsed by, or supported by Tebra/);
+  assert.match(readme, /Business Associate Agreement/);
+  assert.match(pkg.description, /[Ii]ndependent/);
+  assert.match(pkg.description, /not affiliated with Tebra/);
+  assert.match(read('skills/tebra/SKILL.md'), /Business Associate Agreement/);
+});

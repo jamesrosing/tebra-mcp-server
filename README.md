@@ -5,9 +5,11 @@
 
 MCP server for [Tebra](https://www.tebra.com/) (formerly Kareo) practice management. Connects your existing Tebra account to Claude and other MCP-compatible AI agents, exposing **34 SOAP tools** and **13 FHIR clinical tools** for patients, encounters, appointments, billing, documents, insurance, and clinical data. Every request body is generated from the live Tebra WSDL contract (member names and sequence order verified against `KareoServices.svc?xsd=xsd0`/`xsd7`), with a regression suite locking the wire format in place. No data is accessible without valid Tebra API credentials.
 
+This is an independent open-source project. It is not affiliated with, endorsed by, or supported by Tebra Technologies, Inc.; "Tebra" and "Kareo" are trademarks of their owner, used here only to identify the API this server talks to. Tool results contain protected health information: sending them to Claude requires a Claude plan under which Anthropic signs a Business Associate Agreement (BAA). Consumer Claude plans are not covered, and confirming coverage is the responsibility of the practice operating the server.
+
 ### Hosted version available
 
-Do not want to manage credentials, hosting, and updates yourself? [DOCK](https://dockhq.vercel.app) is the managed version of this server: encrypted per-practice auth, audit logs, draft-first write actions, and a workflow library. Founding practices lock lifetime pricing: Front Desk $49/mo (Zenoti), Billing Desk $99/mo (Tebra, BAA included), Full Practice $129/mo (both). https://dockhq.vercel.app
+Do not want to manage credentials, hosting, and updates yourself? [DOCK](https://dockhq.vercel.app) is the managed version of this server: encrypted per-practice auth, audit logs, draft-first write actions, and a workflow library. Founding practices lock lifetime pricing: Front Desk $49/mo (Zenoti), Billing Desk $99/mo (Tebra; DOCK signs its own BAA with the practice, separate from Anthropic's), Full Practice $129/mo (both). https://dockhq.vercel.app
 
 ## Quick Start
 

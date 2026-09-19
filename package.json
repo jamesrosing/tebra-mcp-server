@@ -2,7 +2,7 @@
   "name": "tebra-mcp-server",
   "version": "0.5.1",
   "mcpName": "com.jamesrosingmd/tebra",
-  "description": "MCP server for Tebra/Kareo practice management — 47 tools covering patients, appointments, encounters, billing, payments, documents, providers, and FHIR clinical data for AI agents via the Model Context Protocol",
+  "description": "Independent MCP server for Tebra/Kareo practice management (not affiliated with Tebra) — 47 tools covering patients, appointments, encounters, billing, payments, documents, providers, and FHIR clinical data for AI agents via the Model Context Protocol",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
