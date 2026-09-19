@@ -8,6 +8,7 @@
  */
 
 import type { TebraConfig } from './config.js';
+import { redactForLog } from './redact.js';
 
 // ─── Constants ──────────────────────────────────────────────────
 
@@ -198,13 +199,6 @@ function buildEnvelope(config: TebraConfig, action: string, bodyXml: string): st
 </soap:Envelope>`;
 }
 
-function redactSecrets(xml: string): string {
-  return xml
-    .replace(/<kar:User>[^<]*<\/kar:User>/g, '<kar:User>***</kar:User>')
-    .replace(/<kar:Password>[^<]*<\/kar:Password>/g, '<kar:Password>***</kar:Password>')
-    .replace(/<kar:CustomerKey>[^<]*<\/kar:CustomerKey>/g, '<kar:CustomerKey>***</kar:CustomerKey>');
-}
-
 // ─── SecurityResponse Check ─────────────────────────────────────
 
 function checkSecurityResponse(responseXml: string, action: string): void {
@@ -271,7 +265,7 @@ export async function soapRequest(
   if (debug) {
     console.error(`[tebra-soap] POST ${config.endpoint}`);
     console.error(`[tebra-soap] SOAPAction: ${soapActionHeader}`);
-    console.error(`[tebra-soap] Request body:\n${redactSecrets(envelope)}`);
+    console.error(`[tebra-soap] Request body:\n${redactForLog(envelope)}`);
   }
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -293,7 +287,7 @@ export async function soapRequest(
 
       if (debug) {
         console.error(`[tebra-soap] HTTP ${response.status} for ${action}`);
-        console.error(`[tebra-soap] Response body:\n${responseText.slice(0, 2000)}`);
+        console.error(`[tebra-soap] Response body:\n${redactForLog(responseText.slice(0, 2000))}`);
       }
 
       if (!response.ok) {
