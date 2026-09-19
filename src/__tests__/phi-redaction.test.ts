@@ -138,3 +138,91 @@ describe('PHI redaction — redact module', async () => {
     assert.ok(!out.includes('pw-secret') && !out.includes('Quorvax'), out);
   });
 });
+
+describe('PHI redaction — error messages', () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => { originalFetch = globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  const soapFault = (status: number, text: string) =>
+    new Response(
+      '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><s:Fault>' +
+        `<faultcode>s:Client</faultcode><faultstring>${text}</faultstring>` +
+        '</s:Fault></s:Body></s:Envelope>',
+      { status }
+    );
+
+  const echoingFault = `Patient ${PHI.firstName} ${PHI.lastName} born ${PHI.dob} (${PHI.email}) already exists`;
+
+  it('SOAP HTTP fault text is scrubbed of values sent in the request body', async () => {
+    globalThis.fetch = (async () => soapFault(400, echoingFault)) as typeof fetch;
+
+    await assert.rejects(
+      soapRequest(config, 'CreatePatient', createPatientBody),
+      (err: Error) => {
+        assert.match(err.message, /CreatePatient/);
+        assertNoPhi(err.message, 'HTTP fault message');
+        return true;
+      }
+    );
+  });
+
+  it('SOAP 200 fault text is scrubbed of values sent in the request body', async () => {
+    globalThis.fetch = (async () => soapFault(200, echoingFault)) as typeof fetch;
+
+    await assert.rejects(
+      soapRequest(config, 'CreatePatient', createPatientBody),
+      (err: Error) => { assertNoPhi(err.message, '200 fault message'); return true; }
+    );
+  });
+
+  it('Tebra ErrorResponse text is scrubbed of values sent in the request body', async () => {
+    globalThis.fetch = (async () =>
+      new Response(
+        '<s:Envelope><s:Body><CreatePatientResponse><CreatePatientResult>' +
+          `<ErrorResponse><IsError>true</IsError><ErrorMessage>${echoingFault}</ErrorMessage></ErrorResponse>` +
+          '</CreatePatientResult></CreatePatientResponse></s:Body></s:Envelope>',
+        { status: 200 }
+      )) as typeof fetch;
+
+    await assert.rejects(
+      soapRequest(config, 'CreatePatient', createPatientBody),
+      (err: Error) => { assertNoPhi(err.message, 'ErrorResponse message'); return true; }
+    );
+  });
+
+  it('FHIR request errors name the resource path but not the search parameters', async () => {
+    const { fhirRequest } = await import('../fhir-client.js');
+    const fhirConfig = {
+      clientId: 'cid',
+      clientSecret: 'csecret',
+      baseUrl: 'https://fhir.example.test/fhir-request',
+      tokenUrl: 'https://fhir.example.test/oauth/token',
+    };
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith('/oauth/token')) {
+        return new Response(JSON.stringify({ access_token: 't', expires_in: 3600 }), { status: 200 });
+      }
+      return new Response('{"resourceType":"OperationOutcome"}', { status: 500 });
+    }) as typeof fetch;
+
+    await assert.rejects(
+      fhirRequest(fhirConfig, 'Patient', { family: PHI.lastName, birthdate: PHI.dob }),
+      (err: Error) => {
+        assert.match(err.message, /\/Patient/);
+        assertNoPhi(err.message, 'FHIR error message');
+        return true;
+      }
+    );
+  });
+
+  it('tebra_get_patient does not echo a malformed patientId', async () => {
+    const { handlePatientTool } = await import('../tools/patients.js');
+    await assert.rejects(
+      handlePatientTool('tebra_get_patient', { patientId: PHI.lastName }, config),
+      (err: Error) => { assertNoPhi(err.message, 'validation message'); return true; }
+    );
+  });
+});

@@ -95,7 +95,7 @@ export function buildGetPatientBody(args: Record<string, unknown>): string {
     throw new Error('tebra_get_patient: patientId or externalId is required.');
   }
   if (patientId && !/^\d+$/.test(patientId)) {
-    throw new Error(`tebra_get_patient: patientId must be numeric (got '${patientId}').`);
+    throw new Error('tebra_get_patient: patientId must be numeric.');
   }
 
   // GetPatientReq = { Filter: SinglePatientFilter } — no Fields element.

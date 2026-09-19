@@ -91,6 +91,16 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // Upstream response bodies are truncated before entering error messages —
 // they can be large and, on a PHI-bearing API, do not belong in transcripts
 // verbatim.
+/** URL without its query string — search params carry patient identifiers and must not reach error text. */
+function resourcePath(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url.split('?')[0];
+  }
+}
+
 function truncateBody(text: string, max = 300): string {
   return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
 }
@@ -203,14 +213,14 @@ async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`FHIR request failed (${response.status}) for ${url}: ${truncateBody(text)}`);
+    throw new Error(`FHIR request failed (${response.status}) for ${resourcePath(url)}: ${truncateBody(text)}`);
   }
 
   const text = await response.text();
   if (!text) {
     // Tebra's gateway returns 200-empty (not 404) for unknown paths.
     throw new Error(
-      `FHIR request to ${url} returned an empty 200 response — this almost always means the base URL path is wrong. ` +
+      `FHIR request to ${resourcePath(url)} returned an empty 200 response — this almost always means the base URL path is wrong. ` +
       `Expected base: https://fhir.prd.cloud.tebra.com/fhir-request (note the hyphen). Current base: ${config.baseUrl}`
     );
   }
@@ -218,7 +228,7 @@ async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new Error(`FHIR request to ${url} returned non-JSON content: ${truncateBody(text, 200)}`);
+    throw new Error(`FHIR request to ${resourcePath(url)} returned non-JSON content: ${truncateBody(text, 200)}`);
   }
 }
 

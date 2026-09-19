@@ -44,3 +44,41 @@ export function redactPhi(xml: string): string {
 export function redactForLog(xml: string): string {
   return redactPhi(redactSecrets(xml));
 }
+
+/**
+ * Collect the values of every PHI-tagged leaf element in a request body,
+ * so a server error that echoes them ("Patient Jane Doe already exists")
+ * can be scrubbed before the message is surfaced. Returns longest-first
+ * so a full name is replaced before its parts. XML entities are decoded
+ * because Tebra echoes the decoded value.
+ */
+export function phiValues(xml: string): string[] {
+  const values = new Set<string>();
+  for (const m of xml.matchAll(LEAF_ELEMENT)) {
+    const [, , local, , text] = m;
+    const value = decodeEntities(text.trim());
+    if (PHI_TAG_PATTERN.test(local) && value.length >= 2) values.add(value);
+  }
+  return [...values].sort((a, b) => b.length - a.length);
+}
+
+/** Replace every known PHI value (and each whitespace-separated word of it) with `***`. */
+export function scrubValues(text: string, values: string[]): string {
+  const tokens = new Set<string>();
+  for (const v of values) {
+    tokens.add(v);
+    for (const word of v.split(/\s+/)) if (word.length >= 3) tokens.add(word);
+  }
+  return [...tokens]
+    .sort((a, b) => b.length - a.length)
+    .reduce((out, token) => out.split(token).join('***'), text);
+}
+
+function decodeEntities(s: string): string {
+  return s
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}

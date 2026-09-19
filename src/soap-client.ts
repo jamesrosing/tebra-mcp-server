@@ -8,7 +8,7 @@
  */
 
 import type { TebraConfig } from './config.js';
-import { redactForLog } from './redact.js';
+import { phiValues, redactForLog, scrubValues } from './redact.js';
 
 // ─── Constants ──────────────────────────────────────────────────
 
@@ -261,6 +261,8 @@ export async function soapRequest(
   const envelope = buildEnvelope(config, action, bodyXml);
   const debug = process.env.TEBRA_SOAP_DEBUG === '1' || process.env.TEBRA_SOAP_DEBUG === 'true';
   let lastError: Error | null = null;
+  // Server errors can echo request values back verbatim; strip them before surfacing.
+  const scrub = (text: string): string => scrubValues(text, phiValues(bodyXml));
 
   if (debug) {
     console.error(`[tebra-soap] POST ${config.endpoint}`);
@@ -292,7 +294,7 @@ export async function soapRequest(
 
       if (!response.ok) {
         const faultString = extractTag(responseText, 'faultstring');
-        const message = `SOAP ${action} failed (HTTP ${response.status}): ${(faultString || response.statusText).slice(0, 500)}`;
+        const message = `SOAP ${action} failed (HTTP ${response.status}): ${scrub((faultString || response.statusText).slice(0, 500))}`;
         // Only server-side transients are worth retrying; 4xx will fail identically.
         if (response.status === 429) {
           throw new ThrottledError(message);
@@ -305,7 +307,7 @@ export async function soapRequest(
 
       const faultString = extractTag(responseText, 'faultstring');
       if (faultString) {
-        throw new NonRetryableError(`SOAP fault from ${action}: ${faultString.slice(0, 500)}`);
+        throw new NonRetryableError(`SOAP fault from ${action}: ${scrub(faultString.slice(0, 500))}`);
       }
 
       const errorResponse = extractTag(responseText, 'ErrorResponse');
@@ -313,7 +315,7 @@ export async function soapRequest(
         const isError = extractTag(errorResponse, 'IsError');
         if (isError.toLowerCase() === 'true') {
           const errorMsg = extractTag(errorResponse, 'ErrorMessage');
-          const message = `Tebra ${action} error: ${(errorMsg || 'Unknown error').slice(0, 500)}`;
+          const message = `Tebra ${action} error: ${scrub((errorMsg || 'Unknown error').slice(0, 500))}`;
           // Tebra reports throttling inside ErrorResponse (HTTP 200 + "429 …
           // requested more than allowed") — that one is worth retrying after
           // backoff; everything else here is deterministic.
