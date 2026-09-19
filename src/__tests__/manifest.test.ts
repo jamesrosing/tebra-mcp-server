@@ -73,3 +73,15 @@ test('README, package.json, and the skill state independence from Tebra and the 
   assert.match(pkg.description, /not affiliated with Tebra/);
   assert.match(read('skills/tebra/SKILL.md'), /Business Associate Agreement/);
 });
+
+test('server.json matches the package version and marks every credential secret', () => {
+  const server = JSON.parse(read('server.json')) as {
+    version: string;
+    packages: Array<{ version: string; environmentVariables: Array<{ name: string; isSecret: boolean }> }>;
+  };
+  assert.equal(server.version, pkg.version);
+  for (const p of server.packages) {
+    assert.equal(p.version, pkg.version);
+    for (const v of p.environmentVariables) assert.equal(v.isSecret, true, `${v.name} not secret`);
+  }
+});

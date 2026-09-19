@@ -6,12 +6,12 @@
     "url": "https://github.com/jamesrosing/tebra-mcp-server",
     "source": "github"
   },
-  "version": "0.5.1",
+  "version": "0.6.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "tebra-mcp-server",
-      "version": "0.5.1",
+      "version": "0.6.0",
       "transport": {
         "type": "stdio"
       },
@@ -21,7 +21,7 @@
           "description": "Tebra SOAP API username",
           "isRequired": true,
           "format": "string",
-          "isSecret": false
+          "isSecret": true
         },
         {
           "name": "TEBRA_SOAP_PASSWORD",

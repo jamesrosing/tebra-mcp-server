@@ -2,7 +2,7 @@
   "manifest_version": "0.2",
   "name": "tebra-mcp-server",
   "display_name": "Tebra Practice Management",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Patients, scheduling, encounters, billing, and FHIR clinical data from your own Tebra (Kareo) account.",
   "long_description": "Connects an existing Tebra practice to Claude through the Tebra SOAP API v2.1 and FHIR R4 API. Independent open-source project, not affiliated with or endorsed by Tebra. All data stays between this extension, your Tebra account, and Claude; nothing is proxied through a third-party server. Tool results contain protected health information — use it only under a Claude plan covered by a Business Associate Agreement with Anthropic.",
   "author": {

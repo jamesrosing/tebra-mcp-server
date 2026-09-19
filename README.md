@@ -376,6 +376,17 @@ The regression suite pins the three Tebra wire-format invariants (SOAPAction con
 
 ## Changelog
 
+### 0.6.0 (2026-09-19)
+
+Connectors Directory readiness. No wire-format changes.
+
+- **feat(annotations)**: every tool carries a `title` and MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) derived from its verb, pinned by `tool-annotations.test.ts`.
+- **feat(redact)**: PHI and credentials are scrubbed from the SOAP debug log, and patient identifiers from the request are scrubbed out of thrown error messages (SOAP faults, FHIR errors, and `tebra_get_patient` argument errors). Tested against synthetic records so no identifier survives.
+- **feat(fields)**: record-returning tools accept `fields` for minimum-necessary selection (dotted paths through arrays). `tebra_get_all_patients` defaults to a roster projection; `tebra_get_patient` omits insurance policy and group numbers unless named.
+- **refactor(fhir)**: handlers take a `FhirConfig` resolved once at startup, and the OAuth token cache is keyed per client.
+- **feat(mcpb)**: `manifest.json` (MCPB 0.2) with sensitive `user_config` for every credential, `PRIVACY.md`, `npm run pack:mcpb`, and a CI workflow that packs the bundle on version tags.
+- **docs**: independence from Tebra and the BAA requirement stated in the README, package descriptions, and skill; `server.json` now marks `TEBRA_SOAP_USER` secret.
+
 ### 0.5.1 (2026-09-06)
 
 - **fix(retry safety)**: `tebra_create_payment` (and every other Create* action) is no longer re-sent after a timeout, a reset after send, or an HTTP 5xx. Those failures are ambiguous — Tebra may have committed the write with only the response lost — and Tebra's SOAP API has no idempotency key, so the automatic retry could post a second payment to a patient's account (#13). Create* actions now retry only on failures that provably happened before Tebra could act (429 throttle, connection refused/unresolved); anything else throws `AmbiguousOutcomeError` naming the read tool to verify with before resubmitting. Read actions keep the full 3-attempt retry.
