@@ -105,11 +105,19 @@ function truncateBody(text: string, max = 300): string {
   return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
 }
 
-// Token cache
-let cachedToken: { accessToken: string; expiresAt: number } | null = null;
-// Once a scope is known to work (or the server tells us the registered one),
-// stick with it for subsequent refreshes.
-let resolvedScope: string | null = null;
+// Token cache, keyed per client so two configs in one process never share a
+// bearer token. Once a scope is known to work (or the server tells us the
+// registered one), it is kept for that client's subsequent refreshes.
+interface TokenCacheEntry {
+  accessToken: string;
+  expiresAt: number;
+  scope: string;
+}
+const tokenCache = new Map<string, TokenCacheEntry>();
+
+function cacheKey(config: FhirConfig): string {
+  return `${config.tokenUrl}|${config.clientId}|${config.privateKey?.kid ?? 'client_secret'}`;
+}
 
 function tokenRequestBody(config: FhirConfig, scope: string): URLSearchParams {
   if (config.privateKey) {
@@ -147,14 +155,16 @@ async function requestToken(config: FhirConfig, scope: string): Promise<Response
 }
 
 async function getAccessToken(config: FhirConfig): Promise<string> {
+  const key = cacheKey(config);
+  const cached = tokenCache.get(key);
   // Check cache (with 60s buffer before expiry)
-  if (cachedToken && Date.now() < cachedToken.expiresAt - 60_000) {
-    return cachedToken.accessToken;
+  if (cached && Date.now() < cached.expiresAt - 60_000) {
+    return cached.accessToken;
   }
 
   // Tebra scopes are whatever was registered in appSphere; override via
   // TEBRA_FHIR_SCOPE if the registration used something narrower.
-  let scope = resolvedScope ?? process.env.TEBRA_FHIR_SCOPE?.trim() ?? 'system/*.read';
+  let scope = cached?.scope ?? process.env.TEBRA_FHIR_SCOPE?.trim() ?? 'system/*.read';
   let response = await requestToken(config, scope);
 
   if (!response.ok) {
@@ -178,13 +188,13 @@ async function getAccessToken(config: FhirConfig): Promise<string> {
     }
   }
 
-  resolvedScope = scope;
   const data = await response.json() as { access_token: string; expires_in: number };
-  cachedToken = {
+  tokenCache.set(key, {
     accessToken: data.access_token,
     expiresAt: Date.now() + data.expires_in * 1000,
-  };
-  return cachedToken.accessToken;
+    scope,
+  });
+  return data.access_token;
 }
 
 async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
@@ -200,7 +210,7 @@ async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
 
   // On 401, clear the cached token and retry once with a fresh one.
   if (response.status === 401) {
-    cachedToken = null;
+    tokenCache.delete(cacheKey(config));
     token = await getAccessToken(config);
     response = await fetch(url, {
       headers: {

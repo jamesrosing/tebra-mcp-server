@@ -7,6 +7,7 @@ import {
   formatFhirResult,
   codeDisplay,
   type FhirResource,
+  type FhirConfig,
 } from './helpers.js';
 
 export const fhirCarePlanTools = [
@@ -59,6 +60,7 @@ function summarize(r: FhirResource): Record<string, unknown> {
 export async function handleFhirCarePlanTool(
   _name: string,
   args: Record<string, unknown>,
+  config: FhirConfig,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
@@ -71,6 +73,6 @@ export async function handleFhirCarePlanTool(
   };
   if (args.status) params.status = String(args.status);
 
-  const { resources, truncated } = await searchFhir('CarePlan', params);
+  const { resources, truncated } = await searchFhir(config, 'CarePlan', params);
   return formatFhirResult(resources, 'care plans', summarize, truncated);
 }

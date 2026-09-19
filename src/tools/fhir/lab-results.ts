@@ -7,6 +7,7 @@ import {
   formatFhirResult,
   addDateRange,
   summarizeObservation,
+  type FhirConfig,
 } from './helpers.js';
 
 export const fhirLabResultsTools = [
@@ -42,6 +43,7 @@ export const fhirLabResultsTools = [
 export async function handleFhirLabResultsTool(
   _name: string,
   args: Record<string, unknown>,
+  config: FhirConfig,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
@@ -53,6 +55,6 @@ export async function handleFhirLabResultsTool(
   addDateRange(params, args);
   if (args.code) params.code = String(args.code);
 
-  const { resources, truncated } = await searchFhir('Observation', params);
+  const { resources, truncated } = await searchFhir(config, 'Observation', params);
   return formatFhirResult(resources, 'lab results', summarizeObservation, truncated);
 }

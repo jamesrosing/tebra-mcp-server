@@ -11,6 +11,7 @@ import {
   searchFhir,
   formatFhirResult,
   type FhirResource,
+  type FhirConfig,
 } from './helpers.js';
 
 export const fhirPatientTools = [
@@ -78,6 +79,7 @@ function summarize(r: FhirResource): Record<string, unknown> {
 export async function handleFhirPatientTool(
   _name: string,
   args: Record<string, unknown>,
+  config: FhirConfig,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   const params: Record<string, string | string[]> = {};
   if (args.name) params.name = String(args.name);
@@ -93,6 +95,6 @@ export async function handleFhirPatientTool(
     };
   }
 
-  const { resources, truncated } = await searchFhir('Patient', params);
+  const { resources, truncated } = await searchFhir(config, 'Patient', params);
   return formatFhirResult(resources, 'patients', summarize, truncated);
 }

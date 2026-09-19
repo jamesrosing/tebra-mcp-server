@@ -31,7 +31,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { getConfig } from './config.js';
-import { isFhirConfigured } from './fhir-client.js';
+import { getFhirConfig, isFhirConfigured, type FhirConfig } from './fhir-client.js';
 import { annotateTools } from './tool-annotations.js';
 import { allSoapTools, allFhirTools } from './tool-registry.js';
 
@@ -76,6 +76,14 @@ import { handleFhirPatientTool } from './tools/fhir/patients.js';
 // ─── Validate config on startup ─────────────────────────────────
 
 const config = getConfig();
+// Resolved once at startup (mirrors getConfig for SOAP) so handlers never read
+// the environment per call; null when FHIR tools are not registered.
+const fhirConfig: FhirConfig | null = isFhirConfigured() ? getFhirConfig() : null;
+
+function requireFhirConfig(): FhirConfig {
+  if (!fhirConfig) throw new Error('FHIR tools are not configured on this server.');
+  return fhirConfig;
+}
 
 // ─── Create MCP Server ──────────────────────────────────────────
 
@@ -239,43 +247,43 @@ async function routeToolCall(
 
       // ─── FHIR tools (one file per resource) ─────────
       case 'tebra_fhir_get_allergies':
-        return await handleFhirAllergyTool(name, safeArgs);
+        return await handleFhirAllergyTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_medications':
-        return await handleFhirMedicationTool(name, safeArgs);
+        return await handleFhirMedicationTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_conditions':
-        return await handleFhirConditionTool(name, safeArgs);
+        return await handleFhirConditionTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_vitals':
-        return await handleFhirVitalsTool(name, safeArgs);
+        return await handleFhirVitalsTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_lab_results':
-        return await handleFhirLabResultsTool(name, safeArgs);
+        return await handleFhirLabResultsTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_immunizations':
-        return await handleFhirImmunizationTool(name, safeArgs);
+        return await handleFhirImmunizationTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_procedures':
-        return await handleFhirProcedureTool(name, safeArgs);
+        return await handleFhirProcedureTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_care_plans':
-        return await handleFhirCarePlanTool(name, safeArgs);
+        return await handleFhirCarePlanTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_care_team':
-        return await handleFhirCareTeamTool(name, safeArgs);
+        return await handleFhirCareTeamTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_diagnostic_reports':
-        return await handleFhirDiagnosticReportTool(name, safeArgs);
+        return await handleFhirDiagnosticReportTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_documents':
-        return await handleFhirDocumentTool(name, safeArgs);
+        return await handleFhirDocumentTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_devices':
-        return await handleFhirDeviceTool(name, safeArgs);
+        return await handleFhirDeviceTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_search_patients':
-        return await handleFhirPatientTool(name, safeArgs);
+        return await handleFhirPatientTool(name, safeArgs, requireFhirConfig());
 
       default:
         return {
