@@ -8,3 +8,5 @@ CLAUDE.md
 .env
 .env.local
 *.mcpb
+.claude-plugin/
+.mcp.json
