@@ -10,6 +10,7 @@
  */
 
 import type { TebraConfig } from '../config.js';
+import { FIELDS_ARG, selectFields } from './field-select.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
 
 // ─── Request Body Builder (exported for tests) ──────────────────
@@ -39,7 +40,7 @@ export const bulkPatientTools = [
   {
     name: 'tebra_get_all_patients',
     description:
-      'Get all patients in bulk with pagination. Returns a page of patients and a continuation key for the next page. Use startKey from the previous response to get the next batch.',
+      'Get all patients in bulk with pagination. Returns a page of patients and a continuation key for the next page. Use startKey from the previous response to get the next batch. By default each row is a roster entry (patientId, firstName, lastName, dateOfBirth, mrn, active); pass `fields` to request contact, insurance, or practice columns.',
     inputSchema: {
       type: 'object' as const,
       properties: {
@@ -59,6 +60,7 @@ export const bulkPatientTools = [
           type: 'boolean',
           description: 'Optional filter: true for active patients only, false for inactive only (applied client-side; the returned count reflects the filtered page)',
         },
+        ...FIELDS_ARG,
       },
       required: [],
     },
@@ -66,6 +68,9 @@ export const bulkPatientTools = [
 ];
 
 // ─── Tool Handler ───────────────────────────────────────────────
+
+// A bulk pull is a roster, not a chart: identifiers only unless `fields` says otherwise.
+const ROSTER_FIELDS = ['patientId', 'firstName', 'lastName', 'dateOfBirth', 'mrn', 'active'];
 
 export async function handleBulkPatientTool(
   name: string,
@@ -106,7 +111,7 @@ export async function handleBulkPatientTool(
   }
 
   const result = {
-    patients,
+    patients: selectFields(patients, args.fields ?? ROSTER_FIELDS),
     count: patients.length,
     nextStartKey: nextStartKey || null,
     hasMore: nextStartKey !== '' && nextStartKey !== '0',

@@ -5,9 +5,11 @@
 
 MCP server for [Tebra](https://www.tebra.com/) (formerly Kareo) practice management. Connects your existing Tebra account to Claude and other MCP-compatible AI agents, exposing **34 SOAP tools** and **13 FHIR clinical tools** for patients, encounters, appointments, billing, documents, insurance, and clinical data. Every request body is generated from the live Tebra WSDL contract (member names and sequence order verified against `KareoServices.svc?xsd=xsd0`/`xsd7`), with a regression suite locking the wire format in place. No data is accessible without valid Tebra API credentials.
 
+This is an independent open-source project. It is not affiliated with, endorsed by, or supported by Tebra Technologies, Inc.; "Tebra" and "Kareo" are trademarks of their owner, used here only to identify the API this server talks to. Tool results contain protected health information: sending them to Claude requires a Claude plan under which Anthropic signs a Business Associate Agreement (BAA). Consumer Claude plans are not covered, and confirming coverage is the responsibility of the practice operating the server.
+
 ### Hosted version available
 
-Do not want to manage credentials, hosting, and updates yourself? [DOCK](https://dockhq.vercel.app) is the managed version of this server: encrypted per-practice auth, audit logs, draft-first write actions, and a workflow library. Founding practices lock lifetime pricing: Front Desk $49/mo (Zenoti), Billing Desk $99/mo (Tebra, BAA included), Full Practice $129/mo (both). https://dockhq.vercel.app
+Do not want to manage credentials, hosting, and updates yourself? [DOCK](https://dockhq.vercel.app) is the managed version of this server: encrypted per-practice auth, audit logs, draft-first write actions, and a workflow library. Founding practices lock lifetime pricing: Front Desk $49/mo (Zenoti), Billing Desk $99/mo (Tebra; DOCK signs its own BAA with the practice, separate from Anthropic's), Full Practice $129/mo (both). https://dockhq.vercel.app
 
 ## Quick Start
 
@@ -319,6 +321,22 @@ All clinical tebra_fhir_get_* tools
   require: FHIR patientId (from tebra_fhir_search_patients — NOT the SOAP patient ID)
 ```
 
+## Privacy Policy
+
+This server runs locally and talks only to Tebra's API with your own credentials. It has no backend, no telemetry, and writes nothing to disk. Credentials and patient identifiers are scrubbed from the debug log and from error messages, and every record-returning tool takes a `fields` argument for minimum-necessary selection. Tool results contain protected health information, so sending them to Claude requires a Claude plan under which Anthropic signs a Business Associate Agreement. The full policy is in [PRIVACY.md](PRIVACY.md).
+
+## Desktop Extension (.mcpb)
+
+`manifest.json` packages the server as an MCP Bundle for Claude Desktop, with every credential declared as sensitive `user_config` (stored in the OS keychain) and the FHIR private key as a `file` input. Build the bundle with:
+
+```bash
+npm run pack:mcpb   # builds, prunes dev dependencies, writes tebra-mcp-server.mcpb
+```
+
+`src/__tests__/manifest.test.ts` pins the manifest to `package.json` and to the tool registry, so a tool added to the server without a manifest entry fails the suite.
+
+When installed in Claude Desktop, the FHIR private key must be an absolute path the desktop app can read (a Windows path such as `C:\Users\you\keys\fhir.pem`, not a path relative to some project). An unreadable key disables the 13 FHIR tools with a message on stderr; it does not stop the 34 SOAP tools. Optional fields left blank in the install form are tolerated: Claude Desktop passes them through as the literal `${user_config.<key>}` placeholder, which the server treats as unset.
+
 ## API Reference
 
 The server wraps two Tebra APIs:
@@ -359,6 +377,18 @@ The regression suite pins the three Tebra wire-format invariants (SOAPAction con
 - Agent-facing evaluation set (10 read-only, verifiable questions) to catch wrong-but-plausible data — the failure class unit tests cannot see
 
 ## Changelog
+
+### 0.6.0 (2026-09-19)
+
+Connectors Directory readiness. No wire-format changes.
+
+- **feat(annotations)**: every tool carries a `title` and MCP annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) derived from its verb, pinned by `tool-annotations.test.ts`.
+- **feat(redact)**: PHI and credentials are scrubbed from the SOAP debug log, and patient identifiers from the request are scrubbed out of thrown error messages (SOAP faults, FHIR errors, and `tebra_get_patient` argument errors). Tested against synthetic records so no identifier survives.
+- **feat(fields)**: record-returning tools accept `fields` for minimum-necessary selection (dotted paths through arrays). `tebra_get_all_patients` defaults to a roster projection; `tebra_get_patient` omits insurance policy and group numbers unless named.
+- **refactor(fhir)**: handlers take a `FhirConfig` resolved once at startup, and the OAuth token cache is keyed per client.
+- **feat(mcpb)**: `manifest.json` (MCPB 0.2) with sensitive `user_config` for every credential, `PRIVACY.md`, `npm run pack:mcpb`, and a CI workflow that packs the bundle on version tags.
+- **fix(fhir)**: startup no longer exits when the FHIR key path is unreadable, and unexpanded Claude Desktop `${user_config.*}` placeholders count as unset (verified live 2026-09-19: both took the desktop extension down as "Server disconnected" with no visible cause).
+- **docs**: independence from Tebra and the BAA requirement stated in the README, package descriptions, and skill; `server.json` now marks `TEBRA_SOAP_USER` secret.
 
 ### 0.5.1 (2026-09-06)
 

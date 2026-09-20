@@ -91,15 +91,33 @@ const REQUEST_TIMEOUT_MS = 30_000;
 // Upstream response bodies are truncated before entering error messages —
 // they can be large and, on a PHI-bearing API, do not belong in transcripts
 // verbatim.
+/** URL without its query string — search params carry patient identifiers and must not reach error text. */
+function resourcePath(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return url.split('?')[0];
+  }
+}
+
 function truncateBody(text: string, max = 300): string {
   return text.length > max ? `${text.slice(0, max)}… [truncated]` : text;
 }
 
-// Token cache
-let cachedToken: { accessToken: string; expiresAt: number } | null = null;
-// Once a scope is known to work (or the server tells us the registered one),
-// stick with it for subsequent refreshes.
-let resolvedScope: string | null = null;
+// Token cache, keyed per client so two configs in one process never share a
+// bearer token. Once a scope is known to work (or the server tells us the
+// registered one), it is kept for that client's subsequent refreshes.
+interface TokenCacheEntry {
+  accessToken: string;
+  expiresAt: number;
+  scope: string;
+}
+const tokenCache = new Map<string, TokenCacheEntry>();
+
+function cacheKey(config: FhirConfig): string {
+  return `${config.tokenUrl}|${config.clientId}|${config.privateKey?.kid ?? 'client_secret'}`;
+}
 
 function tokenRequestBody(config: FhirConfig, scope: string): URLSearchParams {
   if (config.privateKey) {
@@ -137,14 +155,16 @@ async function requestToken(config: FhirConfig, scope: string): Promise<Response
 }
 
 async function getAccessToken(config: FhirConfig): Promise<string> {
+  const key = cacheKey(config);
+  const cached = tokenCache.get(key);
   // Check cache (with 60s buffer before expiry)
-  if (cachedToken && Date.now() < cachedToken.expiresAt - 60_000) {
-    return cachedToken.accessToken;
+  if (cached && Date.now() < cached.expiresAt - 60_000) {
+    return cached.accessToken;
   }
 
   // Tebra scopes are whatever was registered in appSphere; override via
   // TEBRA_FHIR_SCOPE if the registration used something narrower.
-  let scope = resolvedScope ?? process.env.TEBRA_FHIR_SCOPE?.trim() ?? 'system/*.read';
+  let scope = cached?.scope ?? process.env.TEBRA_FHIR_SCOPE?.trim() ?? 'system/*.read';
   let response = await requestToken(config, scope);
 
   if (!response.ok) {
@@ -168,13 +188,13 @@ async function getAccessToken(config: FhirConfig): Promise<string> {
     }
   }
 
-  resolvedScope = scope;
   const data = await response.json() as { access_token: string; expires_in: number };
-  cachedToken = {
+  tokenCache.set(key, {
     accessToken: data.access_token,
     expiresAt: Date.now() + data.expires_in * 1000,
-  };
-  return cachedToken.accessToken;
+    scope,
+  });
+  return data.access_token;
 }
 
 async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
@@ -190,7 +210,7 @@ async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
 
   // On 401, clear the cached token and retry once with a fresh one.
   if (response.status === 401) {
-    cachedToken = null;
+    tokenCache.delete(cacheKey(config));
     token = await getAccessToken(config);
     response = await fetch(url, {
       headers: {
@@ -203,14 +223,14 @@ async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`FHIR request failed (${response.status}) for ${url}: ${truncateBody(text)}`);
+    throw new Error(`FHIR request failed (${response.status}) for ${resourcePath(url)}: ${truncateBody(text)}`);
   }
 
   const text = await response.text();
   if (!text) {
     // Tebra's gateway returns 200-empty (not 404) for unknown paths.
     throw new Error(
-      `FHIR request to ${url} returned an empty 200 response — this almost always means the base URL path is wrong. ` +
+      `FHIR request to ${resourcePath(url)} returned an empty 200 response — this almost always means the base URL path is wrong. ` +
       `Expected base: https://fhir.prd.cloud.tebra.com/fhir-request (note the hyphen). Current base: ${config.baseUrl}`
     );
   }
@@ -218,7 +238,7 @@ async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new Error(`FHIR request to ${url} returned non-JSON content: ${truncateBody(text, 200)}`);
+    throw new Error(`FHIR request to ${resourcePath(url)} returned non-JSON content: ${truncateBody(text, 200)}`);
   }
 }
 
@@ -246,17 +266,46 @@ export async function fhirRequestUrl(config: FhirConfig, url: string): Promise<u
   return fhirGet(config, url);
 }
 
+/**
+ * Read a FHIR environment variable, treating blank values and unexpanded
+ * Claude Desktop placeholders as unset. Verified live 2026-09-19: an optional
+ * manifest user_config field the user leaves empty reaches the server as the
+ * literal string "${user_config.<key>}", not as an empty variable.
+ */
+function fhirEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  if (!value || /^\$\{user_config\.[^}]+\}$/.test(value)) return undefined;
+  return value;
+}
+
 export function isFhirConfigured(): boolean {
   return !!(
-    process.env.TEBRA_FHIR_CLIENT_ID &&
-    (process.env.TEBRA_FHIR_PRIVATE_KEY_PATH || process.env.TEBRA_FHIR_CLIENT_SECRET)
+    fhirEnv('TEBRA_FHIR_CLIENT_ID') &&
+    (fhirEnv('TEBRA_FHIR_PRIVATE_KEY_PATH') || fhirEnv('TEBRA_FHIR_CLIENT_SECRET'))
   );
 }
 
+/**
+ * Resolve the FHIR config once at startup, or null when FHIR is not configured
+ * or its credentials cannot be loaded. A bad key path must not kill the server:
+ * under Claude Desktop's built-in Node mode the process's stderr is not shown
+ * to the user, so a startup throw surfaces only as "Server disconnected".
+ */
+export function loadFhirConfigOrDisable(): FhirConfig | null {
+  if (!isFhirConfigured()) return null;
+  try {
+    return getFhirConfig();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`FHIR tools disabled — ${reason}`);
+    return null;
+  }
+}
+
 function loadPrivateKey(): FhirPrivateKey | undefined {
-  const path = process.env.TEBRA_FHIR_PRIVATE_KEY_PATH?.trim();
+  const path = fhirEnv('TEBRA_FHIR_PRIVATE_KEY_PATH');
   if (!path) return undefined;
-  const kid = process.env.TEBRA_FHIR_KID?.trim();
+  const kid = fhirEnv('TEBRA_FHIR_KID');
   if (!kid) {
     throw new Error(
       'TEBRA_FHIR_PRIVATE_KEY_PATH is set but TEBRA_FHIR_KID is not. ' +
@@ -279,12 +328,12 @@ function loadPrivateKey(): FhirPrivateKey | undefined {
 }
 
 export function getFhirConfig(): FhirConfig {
-  const clientId = process.env.TEBRA_FHIR_CLIENT_ID;
+  const clientId = fhirEnv('TEBRA_FHIR_CLIENT_ID');
   if (!clientId) {
     throw new Error('FHIR credentials not configured. Set TEBRA_FHIR_CLIENT_ID plus either TEBRA_FHIR_PRIVATE_KEY_PATH (+ TEBRA_FHIR_KID) or TEBRA_FHIR_CLIENT_SECRET.');
   }
   const privateKey = loadPrivateKey();
-  const clientSecret = privateKey ? undefined : process.env.TEBRA_FHIR_CLIENT_SECRET;
+  const clientSecret = privateKey ? undefined : fhirEnv('TEBRA_FHIR_CLIENT_SECRET');
   if (!privateKey && !clientSecret) {
     throw new Error('FHIR credentials not configured. Set TEBRA_FHIR_PRIVATE_KEY_PATH (+ TEBRA_FHIR_KID) or TEBRA_FHIR_CLIENT_SECRET.');
   }

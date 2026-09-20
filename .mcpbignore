@@ -1,0 +1,12 @@
+src/
+skills/
+.github/
+.claude/
+*.tsbuildinfo
+tsconfig.json
+CLAUDE.md
+.env
+.env.local
+*.mcpb
+.claude-plugin/
+.mcp.json

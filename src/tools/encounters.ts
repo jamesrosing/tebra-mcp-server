@@ -14,6 +14,7 @@
  */
 
 import type { TebraConfig } from '../config.js';
+import { FIELDS_ARG, selectFields } from './field-select.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
 import { buildListGetBody, type FilterSequence } from './filter-helpers.js';
 
@@ -126,6 +127,7 @@ export const encounterTools = [
           type: 'string',
           description: 'Tebra encounter ID',
         },
+        ...FIELDS_ARG,
       },
       required: ['encounterId'],
     },
@@ -241,7 +243,7 @@ export async function handleEncounterTool(
         return { content: [{ type: 'text', text: `Encounter not found: ${encounterId}` }] };
       }
 
-      return { content: [{ type: 'text', text: JSON.stringify(encounters, null, 2) }] };
+      return { content: [{ type: 'text', text: JSON.stringify(selectFields(encounters, args.fields), null, 2) }] };
     }
 
     case 'tebra_create_encounter': {

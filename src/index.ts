@@ -31,49 +31,59 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { getConfig } from './config.js';
-import { isFhirConfigured } from './fhir-client.js';
+import { loadFhirConfigOrDisable, type FhirConfig } from './fhir-client.js';
+import { annotateTools } from './tool-annotations.js';
+import { allSoapTools, allFhirTools } from './tool-registry.js';
 
 // SOAP tool imports
-import { patientTools, handlePatientTool } from './tools/patients.js';
-import { encounterTools, handleEncounterTool } from './tools/encounters.js';
-import { authorizationTools, handleAuthorizationTool } from './tools/authorizations.js';
-import { appointmentTools, handleAppointmentTool } from './tools/appointments.js';
-import { eligibilityTools, handleEligibilityTool } from './tools/eligibility.js';
-import { chargeTools, handleChargeTool } from './tools/charges.js';
-import { procedureCodeTools, handleProcedureCodeTool } from './tools/procedure-codes.js';
-import { providerTools, handleProviderTool } from './tools/providers.js';
-import { serviceLocationTools, handleServiceLocationTool } from './tools/service-locations.js';
-import { appointmentReasonTools, handleAppointmentReasonTool } from './tools/appointment-reasons.js';
-import { appointmentCrudTools, handleAppointmentCrudTool } from './tools/appointment-crud.js';
-import { appointmentDetailTools, handleAppointmentDetailTool } from './tools/appointment-detail.js';
-import { patientCrudTools, handlePatientCrudTool } from './tools/patient-crud.js';
-import { encounterStatusTools, handleEncounterStatusTool } from './tools/encounter-status.js';
-import { paymentTools, handlePaymentTool } from './tools/payments.js';
-import { transactionTools, handleTransactionTool } from './tools/transactions.js';
-import { practiceTools, handlePracticeTool } from './tools/practices.js';
-import { documentTools, handleDocumentTool } from './tools/documents.js';
-import { bulkPatientTools, handleBulkPatientTool } from './tools/bulk-patients.js';
-import { externalIdTools, handleExternalIdTool } from './tools/external-ids.js';
-import { systemTools, handleSystemTool } from './tools/system.js';
+import { handlePatientTool } from './tools/patients.js';
+import { handleEncounterTool } from './tools/encounters.js';
+import { handleAuthorizationTool } from './tools/authorizations.js';
+import { handleAppointmentTool } from './tools/appointments.js';
+import { handleEligibilityTool } from './tools/eligibility.js';
+import { handleChargeTool } from './tools/charges.js';
+import { handleProcedureCodeTool } from './tools/procedure-codes.js';
+import { handleProviderTool } from './tools/providers.js';
+import { handleServiceLocationTool } from './tools/service-locations.js';
+import { handleAppointmentReasonTool } from './tools/appointment-reasons.js';
+import { handleAppointmentCrudTool } from './tools/appointment-crud.js';
+import { handleAppointmentDetailTool } from './tools/appointment-detail.js';
+import { handlePatientCrudTool } from './tools/patient-crud.js';
+import { handleEncounterStatusTool } from './tools/encounter-status.js';
+import { handlePaymentTool } from './tools/payments.js';
+import { handleTransactionTool } from './tools/transactions.js';
+import { handlePracticeTool } from './tools/practices.js';
+import { handleDocumentTool } from './tools/documents.js';
+import { handleBulkPatientTool } from './tools/bulk-patients.js';
+import { handleExternalIdTool } from './tools/external-ids.js';
+import { handleSystemTool } from './tools/system.js';
 
 // FHIR tool imports — one file per resource
-import { fhirAllergyTools, handleFhirAllergyTool } from './tools/fhir/allergies.js';
-import { fhirMedicationTools, handleFhirMedicationTool } from './tools/fhir/medications.js';
-import { fhirConditionTools, handleFhirConditionTool } from './tools/fhir/conditions.js';
-import { fhirVitalsTools, handleFhirVitalsTool } from './tools/fhir/vitals.js';
-import { fhirLabResultsTools, handleFhirLabResultsTool } from './tools/fhir/lab-results.js';
-import { fhirImmunizationTools, handleFhirImmunizationTool } from './tools/fhir/immunizations.js';
-import { fhirProcedureTools, handleFhirProcedureTool } from './tools/fhir/procedures.js';
-import { fhirCarePlanTools, handleFhirCarePlanTool } from './tools/fhir/care-plans.js';
-import { fhirCareTeamTools, handleFhirCareTeamTool } from './tools/fhir/care-team.js';
-import { fhirDiagnosticReportTools, handleFhirDiagnosticReportTool } from './tools/fhir/diagnostic-reports.js';
-import { fhirDocumentTools, handleFhirDocumentTool } from './tools/fhir/documents.js';
-import { fhirDeviceTools, handleFhirDeviceTool } from './tools/fhir/devices.js';
-import { fhirPatientTools, handleFhirPatientTool } from './tools/fhir/patients.js';
+import { handleFhirAllergyTool } from './tools/fhir/allergies.js';
+import { handleFhirMedicationTool } from './tools/fhir/medications.js';
+import { handleFhirConditionTool } from './tools/fhir/conditions.js';
+import { handleFhirVitalsTool } from './tools/fhir/vitals.js';
+import { handleFhirLabResultsTool } from './tools/fhir/lab-results.js';
+import { handleFhirImmunizationTool } from './tools/fhir/immunizations.js';
+import { handleFhirProcedureTool } from './tools/fhir/procedures.js';
+import { handleFhirCarePlanTool } from './tools/fhir/care-plans.js';
+import { handleFhirCareTeamTool } from './tools/fhir/care-team.js';
+import { handleFhirDiagnosticReportTool } from './tools/fhir/diagnostic-reports.js';
+import { handleFhirDocumentTool } from './tools/fhir/documents.js';
+import { handleFhirDeviceTool } from './tools/fhir/devices.js';
+import { handleFhirPatientTool } from './tools/fhir/patients.js';
 
 // ─── Validate config on startup ─────────────────────────────────
 
 const config = getConfig();
+// Resolved once at startup (mirrors getConfig for SOAP) so handlers never read
+// the environment per call; null when FHIR tools are not registered.
+const fhirConfig: FhirConfig | null = loadFhirConfigOrDisable();
+
+function requireFhirConfig(): FhirConfig {
+  if (!fhirConfig) throw new Error('FHIR tools are not configured on this server.');
+  return fhirConfig;
+}
 
 // ─── Create MCP Server ──────────────────────────────────────────
 
@@ -104,47 +114,11 @@ const server = new Server(
 
 // ─── Aggregate all tools ────────────────────────────────────────
 
-const allTools = [
-  ...patientTools,
-  ...encounterTools,
-  ...authorizationTools,
-  ...appointmentTools,
-  ...eligibilityTools,
-  ...chargeTools,
-  ...procedureCodeTools,
-  ...providerTools,
-  ...serviceLocationTools,
-  ...appointmentReasonTools,
-  ...appointmentCrudTools,
-  ...appointmentDetailTools,
-  ...patientCrudTools,
-  ...encounterStatusTools,
-  ...paymentTools,
-  ...transactionTools,
-  ...practiceTools,
-  ...documentTools,
-  ...bulkPatientTools,
-  ...externalIdTools,
-  ...systemTools,
-];
+const allTools = [...allSoapTools];
 
 // Conditionally register FHIR tools when credentials are available
-if (isFhirConfigured()) {
-  allTools.push(
-    ...fhirAllergyTools,
-    ...fhirMedicationTools,
-    ...fhirConditionTools,
-    ...fhirVitalsTools,
-    ...fhirLabResultsTools,
-    ...fhirImmunizationTools,
-    ...fhirProcedureTools,
-    ...fhirCarePlanTools,
-    ...fhirCareTeamTools,
-    ...fhirDiagnosticReportTools,
-    ...fhirDocumentTools,
-    ...fhirDeviceTools,
-    ...fhirPatientTools,
-  );
+if (fhirConfig) {
+  allTools.push(...allFhirTools);
   console.error('FHIR tools enabled — 13 clinical data tools registered');
 } else {
   console.error('FHIR tools disabled — set TEBRA_FHIR_CLIENT_ID plus TEBRA_FHIR_PRIVATE_KEY_PATH + TEBRA_FHIR_KID (or TEBRA_FHIR_CLIENT_SECRET) to enable clinical data tools');
@@ -152,40 +126,7 @@ if (isFhirConfigured()) {
 
 console.error(`Tebra MCP server: ${allTools.length} tools registered`);
 
-// ─── Tool Annotations & Titles ──────────────────────────────────
-// MCP tool annotations are derived from the verb in the tool name so hosts
-// can distinguish read-only lookups from writes and flag destructive ops.
-// openWorldHint is true throughout — every tool talks to Tebra's live API.
-
-function annotationsFor(name: string): Record<string, unknown> {
-  if (/^tebra_(fhir_)?(get|search|check|validate)_/.test(name)) {
-    return { readOnlyHint: true, openWorldHint: true };
-  }
-  if (/^tebra_delete_/.test(name)) {
-    return { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
-  }
-  if (/^tebra_(update|set)_/.test(name)) {
-    return { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true };
-  }
-  // create / register — additive, not idempotent (retries create duplicates).
-  return { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
-}
-
-function titleFor(name: string): string {
-  const fhir = name.startsWith('tebra_fhir_');
-  const words = name
-    .replace(/^tebra_(fhir_)?/, '')
-    .split('_')
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ');
-  return fhir ? `${words} (FHIR)` : words;
-}
-
-const annotatedTools = allTools.map((tool) => ({
-  ...tool,
-  title: titleFor(tool.name),
-  annotations: { title: titleFor(tool.name), ...annotationsFor(tool.name) },
-}));
+const annotatedTools = annotateTools(allTools);
 
 // ─── Tool Listing ───────────────────────────────────────────────
 
@@ -306,43 +247,43 @@ async function routeToolCall(
 
       // ─── FHIR tools (one file per resource) ─────────
       case 'tebra_fhir_get_allergies':
-        return await handleFhirAllergyTool(name, safeArgs);
+        return await handleFhirAllergyTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_medications':
-        return await handleFhirMedicationTool(name, safeArgs);
+        return await handleFhirMedicationTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_conditions':
-        return await handleFhirConditionTool(name, safeArgs);
+        return await handleFhirConditionTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_vitals':
-        return await handleFhirVitalsTool(name, safeArgs);
+        return await handleFhirVitalsTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_lab_results':
-        return await handleFhirLabResultsTool(name, safeArgs);
+        return await handleFhirLabResultsTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_immunizations':
-        return await handleFhirImmunizationTool(name, safeArgs);
+        return await handleFhirImmunizationTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_procedures':
-        return await handleFhirProcedureTool(name, safeArgs);
+        return await handleFhirProcedureTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_care_plans':
-        return await handleFhirCarePlanTool(name, safeArgs);
+        return await handleFhirCarePlanTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_care_team':
-        return await handleFhirCareTeamTool(name, safeArgs);
+        return await handleFhirCareTeamTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_diagnostic_reports':
-        return await handleFhirDiagnosticReportTool(name, safeArgs);
+        return await handleFhirDiagnosticReportTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_documents':
-        return await handleFhirDocumentTool(name, safeArgs);
+        return await handleFhirDocumentTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_get_devices':
-        return await handleFhirDeviceTool(name, safeArgs);
+        return await handleFhirDeviceTool(name, safeArgs, requireFhirConfig());
 
       case 'tebra_fhir_search_patients':
-        return await handleFhirPatientTool(name, safeArgs);
+        return await handleFhirPatientTool(name, safeArgs, requireFhirConfig());
 
       default:
         return {

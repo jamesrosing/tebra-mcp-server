@@ -8,6 +8,7 @@ import {
   codeDisplay,
   refDisplay,
   type FhirResource,
+  type FhirConfig,
 } from './helpers.js';
 
 export const fhirDiagnosticReportTools = [
@@ -53,6 +54,7 @@ function summarize(r: FhirResource): Record<string, unknown> {
 export async function handleFhirDiagnosticReportTool(
   _name: string,
   args: Record<string, unknown>,
+  config: FhirConfig,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
@@ -60,6 +62,6 @@ export async function handleFhirDiagnosticReportTool(
   const params: Record<string, string | string[]> = { patient: patientId };
   if (args.category) params.category = String(args.category);
 
-  const { resources, truncated } = await searchFhir('DiagnosticReport', params);
+  const { resources, truncated } = await searchFhir(config, 'DiagnosticReport', params);
   return formatFhirResult(resources, 'diagnostic reports', summarize, truncated);
 }

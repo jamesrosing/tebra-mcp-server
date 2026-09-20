@@ -7,6 +7,7 @@ import {
   formatFhirResult,
   codeDisplay,
   type FhirResource,
+  type FhirConfig,
 } from './helpers.js';
 
 export const fhirAllergyTools = [
@@ -49,10 +50,11 @@ function summarize(r: FhirResource): Record<string, unknown> {
 export async function handleFhirAllergyTool(
   _name: string,
   args: Record<string, unknown>,
+  config: FhirConfig,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   const patientId = String(args.patientId ?? '');
   if (!patientId) return { content: [{ type: 'text', text: 'patientId is required.' }] };
 
-  const { resources, truncated } = await searchFhir('AllergyIntolerance', { patient: patientId });
+  const { resources, truncated } = await searchFhir(config, 'AllergyIntolerance', { patient: patientId });
   return formatFhirResult(resources, 'allergies', summarize, truncated);
 }

@@ -7,7 +7,7 @@
  * and lab-results).
  */
 
-import { fhirRequest, fhirRequestUrl, getFhirConfig } from '../../fhir-client.js';
+import { fhirRequest, fhirRequestUrl, getFhirConfig, type FhirConfig } from '../../fhir-client.js';
 
 export interface FhirResource {
   resourceType: string;
@@ -77,10 +77,10 @@ const MAX_BUNDLE_PAGES = 10;
  * (following link[relation=next], capped at MAX_BUNDLE_PAGES).
  */
 export async function searchFhir(
+  config: FhirConfig,
   resource: string,
   params: Record<string, string | string[]>,
 ): Promise<{ resources: FhirResource[]; truncated: boolean }> {
-  const config = getFhirConfig();
   const resources: FhirResource[] = [];
   let bundle = await fhirRequest(config, resource, params) as FhirBundle;
   let pages = 1;
@@ -167,4 +167,4 @@ export function summarizeObservation(r: FhirResource): Record<string, unknown> {
   return result;
 }
 
-export { fhirRequest, getFhirConfig };
+export { fhirRequest, getFhirConfig, type FhirConfig };

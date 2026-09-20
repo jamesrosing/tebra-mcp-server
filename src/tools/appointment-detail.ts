@@ -3,6 +3,7 @@
  */
 
 import type { TebraConfig } from '../config.js';
+import { FIELDS_ARG, selectFields } from './field-select.js';
 import { soapRequest, escapeXml, extractTag, extractAllTags } from '../soap-client.js';
 
 // ─── Tool Definitions ───────────────────────────────────────────
@@ -19,6 +20,7 @@ export const appointmentDetailTools = [
           type: 'string',
           description: 'Tebra appointment ID',
         },
+        ...FIELDS_ARG,
       },
       required: ['appointmentId'],
     },
@@ -116,6 +118,6 @@ export async function handleAppointmentDetailTool(
   };
 
   return {
-    content: [{ type: 'text', text: JSON.stringify(detail, null, 2) }],
+    content: [{ type: 'text', text: JSON.stringify(selectFields([detail], args.fields)[0], null, 2) }],
   };
 }

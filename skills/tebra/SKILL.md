@@ -7,6 +7,8 @@ description: Use this skill when working with Tebra/Kareo practice management, m
 
 This skill provides guidance for using the Tebra MCP server tools effectively.
 
+The server is an independent open-source project, not affiliated with or endorsed by Tebra. Every tool result contains protected health information; use these tools only under a Claude plan covered by a Business Associate Agreement with Anthropic, and request only the fields a task needs (most record-returning tools take a `fields` argument).
+
 ## Available Tool Categories
 
 ### Patient Management
