@@ -31,7 +31,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { getConfig } from './config.js';
-import { getFhirConfig, isFhirConfigured, type FhirConfig } from './fhir-client.js';
+import { loadFhirConfigOrDisable, type FhirConfig } from './fhir-client.js';
 import { annotateTools } from './tool-annotations.js';
 import { allSoapTools, allFhirTools } from './tool-registry.js';
 
@@ -78,7 +78,7 @@ import { handleFhirPatientTool } from './tools/fhir/patients.js';
 const config = getConfig();
 // Resolved once at startup (mirrors getConfig for SOAP) so handlers never read
 // the environment per call; null when FHIR tools are not registered.
-const fhirConfig: FhirConfig | null = isFhirConfigured() ? getFhirConfig() : null;
+const fhirConfig: FhirConfig | null = loadFhirConfigOrDisable();
 
 function requireFhirConfig(): FhirConfig {
   if (!fhirConfig) throw new Error('FHIR tools are not configured on this server.');
@@ -117,7 +117,7 @@ const server = new Server(
 const allTools = [...allSoapTools];
 
 // Conditionally register FHIR tools when credentials are available
-if (isFhirConfigured()) {
+if (fhirConfig) {
   allTools.push(...allFhirTools);
   console.error('FHIR tools enabled — 13 clinical data tools registered');
 } else {

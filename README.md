@@ -335,6 +335,8 @@ npm run pack:mcpb   # builds, prunes dev dependencies, writes tebra-mcp-server.m
 
 `src/__tests__/manifest.test.ts` pins the manifest to `package.json` and to the tool registry, so a tool added to the server without a manifest entry fails the suite.
 
+When installed in Claude Desktop, the FHIR private key must be an absolute path the desktop app can read (a Windows path such as `C:\Users\you\keys\fhir.pem`, not a path relative to some project). An unreadable key disables the 13 FHIR tools with a message on stderr; it does not stop the 34 SOAP tools. Optional fields left blank in the install form are tolerated: Claude Desktop passes them through as the literal `${user_config.<key>}` placeholder, which the server treats as unset.
+
 ## API Reference
 
 The server wraps two Tebra APIs:
@@ -385,6 +387,7 @@ Connectors Directory readiness. No wire-format changes.
 - **feat(fields)**: record-returning tools accept `fields` for minimum-necessary selection (dotted paths through arrays). `tebra_get_all_patients` defaults to a roster projection; `tebra_get_patient` omits insurance policy and group numbers unless named.
 - **refactor(fhir)**: handlers take a `FhirConfig` resolved once at startup, and the OAuth token cache is keyed per client.
 - **feat(mcpb)**: `manifest.json` (MCPB 0.2) with sensitive `user_config` for every credential, `PRIVACY.md`, `npm run pack:mcpb`, and a CI workflow that packs the bundle on version tags.
+- **fix(fhir)**: startup no longer exits when the FHIR key path is unreadable, and unexpanded Claude Desktop `${user_config.*}` placeholders count as unset (verified live 2026-09-19: both took the desktop extension down as "Server disconnected" with no visible cause).
 - **docs**: independence from Tebra and the BAA requirement stated in the README, package descriptions, and skill; `server.json` now marks `TEBRA_SOAP_USER` secret.
 
 ### 0.5.1 (2026-09-06)

@@ -266,17 +266,46 @@ export async function fhirRequestUrl(config: FhirConfig, url: string): Promise<u
   return fhirGet(config, url);
 }
 
+/**
+ * Read a FHIR environment variable, treating blank values and unexpanded
+ * Claude Desktop placeholders as unset. Verified live 2026-09-19: an optional
+ * manifest user_config field the user leaves empty reaches the server as the
+ * literal string "${user_config.<key>}", not as an empty variable.
+ */
+function fhirEnv(name: string): string | undefined {
+  const value = process.env[name]?.trim();
+  if (!value || /^\$\{user_config\.[^}]+\}$/.test(value)) return undefined;
+  return value;
+}
+
 export function isFhirConfigured(): boolean {
   return !!(
-    process.env.TEBRA_FHIR_CLIENT_ID &&
-    (process.env.TEBRA_FHIR_PRIVATE_KEY_PATH || process.env.TEBRA_FHIR_CLIENT_SECRET)
+    fhirEnv('TEBRA_FHIR_CLIENT_ID') &&
+    (fhirEnv('TEBRA_FHIR_PRIVATE_KEY_PATH') || fhirEnv('TEBRA_FHIR_CLIENT_SECRET'))
   );
 }
 
+/**
+ * Resolve the FHIR config once at startup, or null when FHIR is not configured
+ * or its credentials cannot be loaded. A bad key path must not kill the server:
+ * under Claude Desktop's built-in Node mode the process's stderr is not shown
+ * to the user, so a startup throw surfaces only as "Server disconnected".
+ */
+export function loadFhirConfigOrDisable(): FhirConfig | null {
+  if (!isFhirConfigured()) return null;
+  try {
+    return getFhirConfig();
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    console.error(`FHIR tools disabled — ${reason}`);
+    return null;
+  }
+}
+
 function loadPrivateKey(): FhirPrivateKey | undefined {
-  const path = process.env.TEBRA_FHIR_PRIVATE_KEY_PATH?.trim();
+  const path = fhirEnv('TEBRA_FHIR_PRIVATE_KEY_PATH');
   if (!path) return undefined;
-  const kid = process.env.TEBRA_FHIR_KID?.trim();
+  const kid = fhirEnv('TEBRA_FHIR_KID');
   if (!kid) {
     throw new Error(
       'TEBRA_FHIR_PRIVATE_KEY_PATH is set but TEBRA_FHIR_KID is not. ' +
@@ -299,12 +328,12 @@ function loadPrivateKey(): FhirPrivateKey | undefined {
 }
 
 export function getFhirConfig(): FhirConfig {
-  const clientId = process.env.TEBRA_FHIR_CLIENT_ID;
+  const clientId = fhirEnv('TEBRA_FHIR_CLIENT_ID');
   if (!clientId) {
     throw new Error('FHIR credentials not configured. Set TEBRA_FHIR_CLIENT_ID plus either TEBRA_FHIR_PRIVATE_KEY_PATH (+ TEBRA_FHIR_KID) or TEBRA_FHIR_CLIENT_SECRET.');
   }
   const privateKey = loadPrivateKey();
-  const clientSecret = privateKey ? undefined : process.env.TEBRA_FHIR_CLIENT_SECRET;
+  const clientSecret = privateKey ? undefined : fhirEnv('TEBRA_FHIR_CLIENT_SECRET');
   if (!privateKey && !clientSecret) {
     throw new Error('FHIR credentials not configured. Set TEBRA_FHIR_PRIVATE_KEY_PATH (+ TEBRA_FHIR_KID) or TEBRA_FHIR_CLIENT_SECRET.');
   }
