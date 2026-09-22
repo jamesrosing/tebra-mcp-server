@@ -261,8 +261,27 @@ export async function fhirRequest(
   return fhirGet(config, url.toString());
 }
 
-/** Fetch an absolute FHIR URL (used to follow Bundle paging links). */
+/**
+ * Fetch an absolute FHIR URL (used to follow Bundle paging links).
+ *
+ * Paging links come from the server response, so they are only followed
+ * same-origin: a bad response must not be able to walk the bearer token
+ * (and PHI-bearing query params) off the configured FHIR host.
+ */
 export async function fhirRequestUrl(config: FhirConfig, url: string): Promise<unknown> {
+  let expected: string;
+  let link: URL;
+  try {
+    expected = new URL(config.baseUrl).origin;
+    link = new URL(url);
+  } catch {
+    throw new Error(`Malformed Bundle paging link or FHIR base URL (refusing to follow): ${String(url).slice(0, 200)}`);
+  }
+  if (link.origin !== expected) {
+    throw new Error(
+      `Bundle paging link points to ${link.origin}, not the configured FHIR origin ${expected} (refusing to follow).`
+    );
+  }
   return fhirGet(config, url);
 }
 
