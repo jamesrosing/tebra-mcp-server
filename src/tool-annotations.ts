@@ -25,7 +25,9 @@ export function annotationsFor(name: string): Omit<ToolAnnotations, 'title'> {
     return { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
   }
   if (/^tebra_(update|set)_/.test(name)) {
-    return { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true };
+    // update / set — overwrite existing record state in place: idempotent,
+    // but destructive (no undo), so hosts should confirm.
+    return { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true };
   }
   // create / register — additive, not idempotent (retries create duplicates).
   return { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true };
