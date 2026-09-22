@@ -32,7 +32,8 @@ const CREATES = new Set([
   'tebra_create_payment', 'tebra_create_document', 'tebra_register_external_vendor',
   'tebra_create_appointment_reason',
 ]);
-// In-place updates: re-sending the same request converges on the same state.
+// In-place updates: re-sending the same request converges on the same state,
+// but it overwrites what's already there — idempotent, still destructive.
 const IDEMPOTENT_UPDATES = new Set([
   'tebra_update_patient', 'tebra_update_encounter_status', 'tebra_update_appointment',
   'tebra_update_appointment_status', 'tebra_update_patient_external_id',
@@ -74,10 +75,10 @@ describe('annotationsFor', () => {
     }
   });
 
-  it('marks updates as idempotent, non-destructive writes', () => {
+  it('marks updates as idempotent, destructive writes', () => {
     for (const name of IDEMPOTENT_UPDATES) {
       assert.deepEqual(annotationsFor(name),
-        { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true }, name);
+        { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true }, name);
     }
   });
 
