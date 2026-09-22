@@ -19,7 +19,7 @@ const SECRET_TAGS = ['User', 'Password', 'CustomerKey'];
  * and group numbers, external IDs, and free-text notes.
  */
 const PHI_TAG_PATTERN =
-  /name|dob|birth|ssn|social|phone|fax|email|address|street|zip|postal|mrn|medicalrecord|note|comment|number|externalid|guarantor|employer/i;
+  /name|dob|birth|ssn|social|phone|fax|email|address|street|zip|postal|mrn|medicalrecord|note|comment|number|externalid|guarantor|employer|filecontent/i;
 
 // Leaf element: <prefix:Local attrs?>text</prefix:Local>
 const LEAF_ELEMENT = /<((?:[\w-]+:)?([\w.-]+))(\s[^>]*)?>([^<]+)<\/\1>/g;

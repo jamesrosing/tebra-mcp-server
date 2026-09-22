@@ -289,12 +289,14 @@ export async function soapRequest(
 
       if (debug) {
         console.error(`[tebra-soap] HTTP ${response.status} for ${action}`);
-        console.error(`[tebra-soap] Response body:\n${redactForLog(responseText.slice(0, 2000))}`);
+        console.error(`[tebra-soap] Response body:\n${redactForLog(responseText).slice(0, 2000)}`);
       }
 
       if (!response.ok) {
         const faultString = extractTag(responseText, 'faultstring');
-        const message = `SOAP ${action} failed (HTTP ${response.status}): ${scrub((faultString || response.statusText).slice(0, 500))}`;
+        // Scrub the FULL text before capping: slicing first can cut a PHI
+        // element in half, and an unclosed tag is invisible to redactPhi/scrub.
+        const message = `SOAP ${action} failed (HTTP ${response.status}): ${scrub(faultString || response.statusText).slice(0, 500)}`;
         // Only server-side transients are worth retrying; 4xx will fail identically.
         if (response.status === 429) {
           throw new ThrottledError(message);
@@ -307,7 +309,7 @@ export async function soapRequest(
 
       const faultString = extractTag(responseText, 'faultstring');
       if (faultString) {
-        throw new NonRetryableError(`SOAP fault from ${action}: ${scrub(faultString.slice(0, 500))}`);
+        throw new NonRetryableError(`SOAP fault from ${action}: ${scrub(faultString).slice(0, 500)}`);
       }
 
       const errorResponse = extractTag(responseText, 'ErrorResponse');
@@ -315,7 +317,7 @@ export async function soapRequest(
         const isError = extractTag(errorResponse, 'IsError');
         if (isError.toLowerCase() === 'true') {
           const errorMsg = extractTag(errorResponse, 'ErrorMessage');
-          const message = `Tebra ${action} error: ${scrub((errorMsg || 'Unknown error').slice(0, 500))}`;
+          const message = `Tebra ${action} error: ${scrub(errorMsg || 'Unknown error').slice(0, 500)}`;
           // Tebra reports throttling inside ErrorResponse (HTTP 200 + "429 …
           // requested more than allowed") — that one is worth retrying after
           // backoff; everything else here is deterministic.

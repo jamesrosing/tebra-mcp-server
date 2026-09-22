@@ -137,6 +137,17 @@ describe('PHI redaction — redact module', async () => {
     const out = redactForLog('<kar:Password>pw-secret</kar:Password><kar:LastName>Quorvax</kar:LastName>');
     assert.ok(!out.includes('pw-secret') && !out.includes('Quorvax'), out);
   });
+
+  // create_document ships a base64 document body inside <kar:FileContent>; its
+  // local name carries no identifier fragment, so it must be added to the PHI
+  // pattern explicitly or the raw document bytes reach stderr under
+  // TEBRA_SOAP_DEBUG (and slip past phiValues/scrub for error messages).
+  it('redactForLog blanks FileContent so a base64 document body is not logged raw', () => {
+    const payload = 'QUJDREVGR0hJSktMTU5PUA==';
+    const out = redactForLog(`<kar:FileContent>${payload}</kar:FileContent>`);
+    assert.ok(out.includes('***'), `expected FileContent to be blanked, got: ${out}`);
+    assert.ok(!out.includes(payload), `base64 document body leaked: ${out}`);
+  });
 });
 
 describe('PHI redaction — error messages', () => {
