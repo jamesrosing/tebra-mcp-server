@@ -27,6 +27,8 @@
 import { createPrivateKey, randomBytes, sign as cryptoSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
+import { scrubValues } from './redact.js';
+
 export interface FhirPrivateKey {
   /** PEM-encoded private key (PKCS#8). Never logged, never sent — it only signs. */
   pem: string;
@@ -223,7 +225,12 @@ async function fhirGet(config: FhirConfig, url: string): Promise<unknown> {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`FHIR request failed (${response.status}) for ${resourcePath(url)}: ${truncateBody(text)}`);
+    // Query params carry patient identifiers (see resourcePath); scrub any the
+    // server echoes back in an OperationOutcome before surfacing the error.
+    const echoed = [...new URL(url).searchParams.values()].filter(v => v.length >= 2);
+    throw new Error(
+      `FHIR request failed (${response.status}) for ${resourcePath(url)}: ${truncateBody(scrubValues(text, echoed))}`
+    );
   }
 
   const text = await response.text();

@@ -137,4 +137,40 @@ describe('Tebra SOAP client', () => {
       'Fields must precede Filter in the request body per WSDL sequence'
     );
   });
+
+  // The debug log caps the response at 2000 chars. If the cap is applied
+  // BEFORE redaction, a PHI element straddling that boundary loses its
+  // closing tag, redactPhi's leaf pattern no longer matches, and the visible
+  // half of the value is written to stderr raw. Redact first, then cap.
+  it('redacts a PHI value that straddles the 2000-char debug-log cutoff', async () => {
+    const originalDebug = process.env.TEBRA_SOAP_DEBUG;
+    const originalConsoleError = console.error;
+    const logged: string[] = [];
+    process.env.TEBRA_SOAP_DEBUG = '1';
+    console.error = (...parts: unknown[]) => { logged.push(parts.map(String).join(' ')); };
+
+    try {
+      const pre = '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body><GetPracticesResponse>';
+      const tag = '<name>';
+      // Start the leaf value at index 1996 so 'Jane' is inside the 2000-char
+      // window while the closing </name> at index 2006 is cut off — the exact
+      // shape the slice-then-redact ordering used to leak.
+      const pad = 'Z'.repeat(1996 - pre.length - tag.length);
+      const responseText =
+        pre + pad + tag + 'Jane Q Doe</name></GetPracticesResponse></s:Body></s:Envelope>';
+
+      globalThis.fetch = (async () => new Response(responseText, { status: 200 })) as typeof fetch;
+
+      await soapRequest(config, 'GetPractices', '<kar:request></kar:request>');
+
+      const output = logged.join('\n');
+      assert.ok(output.includes('Response body'), 'TEBRA_SOAP_DEBUG response logging should have run');
+      assert.ok(!output.includes('Jane'), `PHI straddling the 2000-char cutoff leaked: ${output.slice(-400)}`);
+    } finally {
+      globalThis.fetch = originalFetch;
+      console.error = originalConsoleError;
+      if (originalDebug === undefined) delete process.env.TEBRA_SOAP_DEBUG;
+      else process.env.TEBRA_SOAP_DEBUG = originalDebug;
+    }
+  });
 });
